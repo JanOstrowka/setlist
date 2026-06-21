@@ -335,7 +335,14 @@ def recent_endpoint() -> list:
 
 @app.post("/reveal")
 def reveal_endpoint(req: RevealRequest) -> dict:
-    path = Path(req.path)
+    # The server listens on localhost, so any web page in the browser could POST
+    # here (CSRF) to pop Finder on arbitrary files or probe paths. Only reveal
+    # paths within the configured output dir. resolve() also collapses symlinks,
+    # so a link inside the dir cannot be used to escape it.
+    output_dir = cfg.output_dir.resolve()
+    path = Path(req.path).resolve()
+    if not path.is_relative_to(output_dir):
+        raise HTTPException(status_code=403, detail="Path is outside the output directory")
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     try:

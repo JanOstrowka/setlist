@@ -27,11 +27,73 @@ def test_recent_returns_list(monkeypatch):
     assert isinstance(resp.json(), list)
 
 
-def test_reveal_missing_path_returns_404(monkeypatch):
+def _use_output_dir(monkeypatch, output_dir: Path) -> list:
+    """Point the app at a temp output dir and capture any subprocess.run calls.
+
+    Returns the list that records reveal invocations, so tests can assert that
+    `open -R` is (or is not) called without actually opening Finder.
+    """
+    monkeypatch.setattr(
+        main_module, "cfg",
+        dataclasses.replace(main_module.cfg, output_dir=output_dir.resolve()),
+    )
+    calls: list = []
+    monkeypatch.setattr(
+        main_module.subprocess, "run",
+        lambda *a, **k: calls.append((a, k)),
+    )
+    return calls
+
+
+def test_reveal_missing_path_returns_404(monkeypatch, tmp_path):
     monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    calls = _use_output_dir(monkeypatch, tmp_path)
     client = TestClient(app)
-    resp = client.post("/reveal", json={"path": "/no/such/file_xyz123.m4a"})
+    # Inside the output dir but nonexistent: containment passes, existence fails.
+    resp = client.post("/reveal", json={"path": str(tmp_path / "no_such_file_xyz123.m4a")})
     assert resp.status_code == 404
+    assert calls == []
+
+
+def test_reveal_inside_output_dir_invokes_open(monkeypatch, tmp_path):
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    calls = _use_output_dir(monkeypatch, tmp_path)
+    target = tmp_path / "DJ" / "Set" / "track.m4a"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"audio")
+    client = TestClient(app)
+    resp = client.post("/reveal", json={"path": str(target)})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert len(calls) == 1
+    argv = calls[0][0][0]
+    assert argv[0] == "open" and argv[1] == "-R"
+    assert Path(argv[2]) == target.resolve()
+
+
+def test_reveal_outside_output_dir_returns_403(monkeypatch, tmp_path):
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    calls = _use_output_dir(monkeypatch, tmp_path)
+    client = TestClient(app)
+    resp = client.post("/reveal", json={"path": "/etc/passwd"})
+    assert resp.status_code == 403
+    assert calls == []
+
+
+def test_reveal_symlink_escape_returns_403(monkeypatch, tmp_path):
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("top secret")
+    link = output_dir / "escape"
+    link.symlink_to(secret)
+    calls = _use_output_dir(monkeypatch, output_dir)
+    client = TestClient(app)
+    # The link lives inside the output dir but resolves outside it.
+    resp = client.post("/reveal", json={"path": str(link)})
+    assert resp.status_code == 403
+    assert calls == []
 
 
 def test_progress_unknown_job_returns_404(monkeypatch):
