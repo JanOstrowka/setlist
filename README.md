@@ -79,19 +79,28 @@ cohesive **gapless album**:
 
 1. Resolve a URL. If it has YouTube **chapters** or **description timestamps**, an
    editable tracklist is proposed automatically (chapters preferred).
-2. Edit start times (`m:ss` / `h:mm:ss`), titles, and artists; add/remove/reorder rows.
-   You can also **paste** a tracklist (e.g. from 1001tracklists) — formats
-   `N. Artist - Title [time]`, `Artist - Title`, and `time Title` are recognized; fill
-   in any missing times.
-3. **Download & split** downloads + encodes the set once, cuts each track **losslessly**
+2. Or paste a **1001tracklists URL** in the preview and click **Fetch tracklist**: the
+   page is fetched through Firecrawl (it renders JS and bypasses the Cloudflare bot
+   wall), and the ordered tracks + cue times fill the editor automatically (the set
+   artist/title fill Album Artist/Album). The split toggle flips on for you.
+4. Edit start times (`m:ss` / `h:mm:ss`), titles, and artists; add/remove/reorder rows.
+   You can also **paste** a tracklist by hand — formats `N. Artist - Title [time]`,
+   `Artist - Title`, and `time Title` are recognized; fill in any missing times.
+5. **Download & split** downloads + encodes the set once, cuts each track **losslessly**
    (`ffmpeg -c copy`, no re-encode), and tags them as one album: shared Album/Album Artist,
    sequential track numbers, `pgap=1` (gapless), and `cpil=1` when track artists differ.
 
 Output goes to `OUTPUT_DIR/<Album Artist>/<Album>/NN - Track.m4a` with a shared `cover.jpg`.
 
-### Future tracklist sources (not yet built)
+### Tracklist sources
 
-The tracklist layer (`app/core/tracklist.py`) is source-agnostic. Two sources are
-deferred behind the same `Track`/`Tracklist` interface and can be added later as extra
-parsers: **1001tracklists scraping** (Cloudflare-Turnstile-gated, no official API) and
-**audio fingerprinting** (AudD / Panako).
+The tracklist layer (`app/core/tracklist.py`) is source-agnostic. Each source is a
+`parse_*()` producer returning the same `Track`/`Tracklist` types:
+
+- **YouTube chapters** and **description timestamps** (`tracklist.py`).
+- **Manual paste/edit** (`tracklist.py`).
+- **1001tracklists** (`tracklist_1001.py`): paste the tracklist URL and it is fetched via
+  Firecrawl (the site is Cloudflare-Turnstile-gated with no official API) and parsed into
+  ordered tracks with cue times. Requires `FIRECRAWL_API_KEY`.
+
+Still deferred behind the same interface: **audio fingerprinting** (AudD / Panako).
