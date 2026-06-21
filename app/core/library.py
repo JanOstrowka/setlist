@@ -11,11 +11,13 @@ _RECENT_CAP = 20
 
 
 def sanitize_filename(name: str) -> str:
+    """Make a string safe + readable as a single macOS/APFS path component."""
     cleaned = name or ""
     for bad, good in _ILLEGAL.items():
         cleaned = cleaned.replace(bad, good)
-    cleaned = cleaned.replace("\x00", "")
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    cleaned = re.sub(r"[\x00-\x1f]", "", cleaned)        # strip control chars
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()    # collapse whitespace
+    cleaned = cleaned.strip(" .")                        # no leading/trailing dots or spaces
     return cleaned or "untitled"
 
 
@@ -25,9 +27,48 @@ def ensure_output_dir(output_dir: Path | str) -> Path:
     return path
 
 
-def output_path(output_dir: Path | str, album_artist: str, title: str, video_id: str) -> Path:
-    filename = f"{sanitize_filename(album_artist or 'Unknown Artist')} - {sanitize_filename(title or 'Untitled')} [{video_id}].m4a"
-    return Path(output_dir).expanduser() / filename
+def set_output_dir(
+    output_dir: Path | str,
+    album_artist: str,
+    artist: str,
+    album: str,
+    title: str,
+) -> Path:
+    """Folder for one set/album: OUTPUT_DIR/<Artist>/<Set>/.
+
+    Artist = Album Artist (fallback Artist); Set = Album (fallback Title).
+    """
+    artist_name = sanitize_filename(album_artist or artist or "Unknown Artist")
+    set_name = sanitize_filename(album or title or "Untitled")
+    return Path(output_dir).expanduser() / artist_name / set_name
+
+
+def single_track_path(
+    output_dir: Path | str,
+    album_artist: str,
+    artist: str,
+    album: str,
+    title: str,
+) -> Path:
+    """v1 single track destination: OUTPUT_DIR/<Artist>/<Set>/<Title>.m4a."""
+    set_dir = set_output_dir(output_dir, album_artist, artist, album, title)
+    return set_dir / f"{sanitize_filename(title or 'Untitled')}.m4a"
+
+
+def track_filename(index: int, title: str) -> str:
+    """v2 per-track filename inside the set folder: 'NN - Title.m4a'."""
+    return f"{index:02d} - {sanitize_filename(title or 'Untitled')}.m4a"
+
+
+def write_cover(set_dir: Path | str, cover_jpeg: bytes | None) -> Path | None:
+    """Write a standalone cover.jpg into the set folder (for Apple Music playlist
+    artwork). No-op when there is no cover; never raises on a missing cover."""
+    if not cover_jpeg:
+        return None
+    folder = ensure_output_dir(set_dir)
+    path = folder / "cover.jpg"
+    path.write_bytes(cover_jpeg)
+    return path
 
 
 def save(temp_file: Path | str, dest: Path | str) -> Path:

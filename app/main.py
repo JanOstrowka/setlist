@@ -99,14 +99,15 @@ class JobManager:
             tagger.write_tags(encoded, req.metadata, cover)
             self._emit(job_id, ProgressEvent(stage="tag", pct=100.0, message="Tags written"))
 
-            library.ensure_output_dir(self.cfg.output_dir)
-            dest = library.output_path(
+            dest = library.single_track_path(
                 self.cfg.output_dir,
-                req.metadata.album_artist or req.metadata.artist,
+                req.metadata.album_artist,
+                req.metadata.artist,
+                req.metadata.album,
                 req.metadata.title,
-                req.video_id,
             )
             library.save(encoded, dest)
+            library.write_cover(dest.parent, cover)
             library.record_recent(self.cfg.output_dir, {
                 "path": str(dest),
                 "title": req.metadata.title,

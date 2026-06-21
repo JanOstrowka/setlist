@@ -40,7 +40,7 @@ def load_config() -> Config:
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         firecrawl_api_key=os.getenv("FIRECRAWL_API_KEY") or None,
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        output_dir=_expand(os.getenv("OUTPUT_DIR", "~/Music/YouTube Sets")),
+        output_dir=_expand(os.getenv("OUTPUT_DIR", "~/Music/Music/Media/Music")),
         default_format=os.getenv("DEFAULT_FORMAT", "alac"),
         port=int(os.getenv("PORT", "8765")),
         pot_provider_url=os.getenv("POT_PROVIDER_URL") or None,

@@ -23,7 +23,7 @@ def test_config_defaults(monkeypatch):
     assert cfg.openai_api_key is None
     assert cfg.firecrawl_api_key is None
     assert cfg.pot_provider_url is None
-    assert str(cfg.output_dir).endswith("YouTube Sets")
+    assert str(cfg.output_dir).endswith("Media/Music")
 
 
 def test_config_reads_environment(monkeypatch):
@@ -41,12 +41,12 @@ def test_config_reads_environment(monkeypatch):
 def test_output_dir_expands_tilde(monkeypatch):
     # A `~`-prefixed OUTPUT_DIR (as shipped in .env.example) must resolve to a
     # real absolute path, not a literal "~" directory created in the cwd.
-    monkeypatch.setenv("OUTPUT_DIR", "~/Music/YouTube Sets")
+    monkeypatch.setenv("OUTPUT_DIR", "~/Music/Music/Media/Music")
     cfg = load_config()
     assert cfg.output_dir.is_absolute()
     assert "~" not in str(cfg.output_dir)
     assert str(cfg.output_dir).startswith(os.path.expanduser("~"))
-    assert str(cfg.output_dir).endswith("YouTube Sets")
+    assert str(cfg.output_dir).endswith("Media/Music")
 
 
 def test_metadata_defaults():
