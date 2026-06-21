@@ -1,3 +1,5 @@
+import os
+
 from app.config import APP_NAME, load_config
 from app.models import MetadataFields, DownloadRequest, ProgressEvent
 
@@ -34,6 +36,17 @@ def test_config_reads_environment(monkeypatch):
     assert cfg.default_format == "aac256"
     assert cfg.port == 9000
     assert cfg.openai_api_key == "sk-test"
+
+
+def test_output_dir_expands_tilde(monkeypatch):
+    # A `~`-prefixed OUTPUT_DIR (as shipped in .env.example) must resolve to a
+    # real absolute path, not a literal "~" directory created in the cwd.
+    monkeypatch.setenv("OUTPUT_DIR", "~/Music/YouTube Sets")
+    cfg = load_config()
+    assert cfg.output_dir.is_absolute()
+    assert "~" not in str(cfg.output_dir)
+    assert str(cfg.output_dir).startswith(os.path.expanduser("~"))
+    assert str(cfg.output_dir).endswith("YouTube Sets")
 
 
 def test_metadata_defaults():

@@ -10,10 +10,11 @@ fi
 source .venv/bin/activate
 pip install -q -e . >/dev/null
 
-# Load PORT (and any other settings) from .env if present.
-set -a
-[ -f .env ] && source .env
-set +a
+# Read only PORT from .env, without executing the file. Sourcing the whole
+# .env breaks on any unquoted space in a value (e.g. OUTPUT_DIR=~/Music/YouTube
+# Sets), where bash would try to run "Sets" as a command. The Python app loads
+# the rest of .env itself, so bash only needs PORT here.
+PORT="$(sed -n 's/^[[:space:]]*PORT[[:space:]]*=[[:space:]]*//p' .env 2>/dev/null | tail -n1 | tr -d '"' | tr -d '[:space:]')"
 PORT="${PORT:-8765}"
 
 # Open the browser shortly after the server starts.

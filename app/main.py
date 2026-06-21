@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -145,6 +145,12 @@ class RevealRequest(BaseModel):
 @app.get("/")
 def index() -> HTMLResponse:
     return HTMLResponse(render_index())
+
+
+@app.get("/favicon.ico")
+def favicon() -> Response:
+    # Browsers auto-request /favicon.ico; return 204 to silence the 404 noise.
+    return Response(status_code=204)
 
 
 @app.post("/resolve", response_model=ResolveResponse)
