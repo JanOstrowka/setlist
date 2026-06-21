@@ -24,8 +24,11 @@ class Track(BaseModel):
 
 
 class Tracklist(BaseModel):
-    source: Literal["chapters", "description", "manual", "none"] = "none"
+    source: Literal["chapters", "description", "manual", "none", "1001tracklists"] = "none"
     tracks: list[Track] = Field(default_factory=list)
+    album: str = ""  # optional proposed set/album title (e.g. from a 1001tracklists H1)
+    album_artist: str = ""  # optional proposed set artist (e.g. "John Summit")
+    note: str = ""  # optional human-readable note about the parse (e.g. cue coverage)
 
 
 class ResolveRequest(BaseModel):
