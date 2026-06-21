@@ -31,7 +31,7 @@ cp .env.example .env   # then edit .env and add your keys
 | `OPENAI_API_KEY` | — | Required for AI metadata; without it, falls back to title parsing |
 | `FIRECRAWL_API_KEY` | — | Optional web enrichment; skipped if unset |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Cheap, fast default |
-| `OUTPUT_DIR` | `~/Music/YouTube Sets` | Created on first run |
+| `OUTPUT_DIR` | `~/Music/Music/Media/Music` | Apple Music media folder; created on first run |
 | `DEFAULT_FORMAT` | `alac` | UI toggle switches to `aac256` |
 | `PORT` | `8765` | Loopback server port |
 | `POT_PROVIDER_URL` | empty | Optional PO-token provider sidecar for YouTube bot checks |
@@ -62,7 +62,36 @@ RUN_SMOKE=1 pytest tests/test_smoke.py -v   # optional end-to-end network test
 - yt-dlp self-updates best-effort on launch; set `YT_DLP_SELF_UPDATE=0` to disable.
 - If YouTube throws bot checks, set `POT_PROVIDER_URL` to a running PO-token provider sidecar.
 
-## Out of scope (v2)
+## Output layout
 
-Splitting long DJ sets into per-track albums is a future v2 feature. The UI shows a disabled
-"Split into separate tracks (v2)" placeholder; it does nothing in v1.
+Files are organized as `OUTPUT_DIR/<Artist>/<Set>/…`:
+
+- **Artist** = Album Artist (falls back to Artist).
+- **Set** = Album (falls back to Title).
+- Single track → `<Set>/<Title>.m4a`.
+- Split album → `<Set>/01 - Track.m4a`, `02 - …`.
+- Each set folder also gets a standalone `cover.jpg` (the same square cover embedded in the audio) for setting Apple Music *playlist* artwork.
+
+## Splitting sets into tracks (v2)
+
+Toggle **Split into separate tracks** in the preview to cut a long mix/DJ set into a
+cohesive **gapless album**:
+
+1. Resolve a URL. If it has YouTube **chapters** or **description timestamps**, an
+   editable tracklist is proposed automatically (chapters preferred).
+2. Edit start times (`m:ss` / `h:mm:ss`), titles, and artists; add/remove/reorder rows.
+   You can also **paste** a tracklist (e.g. from 1001tracklists) — formats
+   `N. Artist - Title [time]`, `Artist - Title`, and `time Title` are recognized; fill
+   in any missing times.
+3. **Download & split** downloads + encodes the set once, cuts each track **losslessly**
+   (`ffmpeg -c copy`, no re-encode), and tags them as one album: shared Album/Album Artist,
+   sequential track numbers, `pgap=1` (gapless), and `cpil=1` when track artists differ.
+
+Output goes to `OUTPUT_DIR/<Album Artist>/<Album>/NN - Track.m4a` with a shared `cover.jpg`.
+
+### Future tracklist sources (not yet built)
+
+The tracklist layer (`app/core/tracklist.py`) is source-agnostic. Two sources are
+deferred behind the same `Track`/`Tracklist` interface and can be added later as extra
+parsers: **1001tracklists scraping** (Cloudflare-Turnstile-gated, no official API) and
+**audio fingerprinting** (AudD / Panako).
