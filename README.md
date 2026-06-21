@@ -31,7 +31,7 @@ cp .env.example .env   # then edit .env and add your keys
 | `OPENAI_API_KEY` | — | Required for AI metadata; without it, falls back to title parsing |
 | `FIRECRAWL_API_KEY` | — | Optional web enrichment; skipped if unset |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Cheap, fast default |
-| `OUTPUT_DIR` | `~/Music/Music/Media/Music` | Apple Music media folder; created on first run |
+| `OUTPUT_DIR` | `~/Music/YouTube Sets` | Output folder you drag into Apple Music; created on first run |
 | `DEFAULT_FORMAT` | `alac` | UI toggle switches to `aac256` |
 | `PORT` | `8765` | Loopback server port |
 | `POT_PROVIDER_URL` | empty | Optional PO-token provider sidecar for YouTube bot checks |
@@ -68,7 +68,7 @@ Files are organized as `OUTPUT_DIR/<Artist>/<Set>/…`:
 
 - **Artist** = Album Artist (falls back to Artist).
 - **Set** = Album (falls back to Title).
-- Single track → `<Set>/<Title>.m4a`.
+- Single track → `<Set>/<Title> [<video_id>].m4a` (the `[<video_id>]` suffix keeps two different source videos with the same Artist/Set/Title from overwriting each other).
 - Split album → `<Set>/01 - Track.m4a`, `02 - …`.
 - Each set folder also gets a standalone `cover.jpg` (the same square cover embedded in the audio) for setting Apple Music *playlist* artwork.
 

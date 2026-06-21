@@ -124,6 +124,7 @@ class JobManager:
                 req.metadata.artist,
                 req.metadata.album,
                 req.metadata.title,
+                req.video_id,
             )
             library.save(encoded, dest)
             library.write_cover(dest.parent, cover)

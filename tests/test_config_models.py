@@ -23,7 +23,10 @@ def test_config_defaults(monkeypatch):
     assert cfg.openai_api_key is None
     assert cfg.firecrawl_api_key is None
     assert cfg.pot_provider_url is None
-    assert str(cfg.output_dir).endswith("Media/Music")
+    # Safe default: a dedicated drop folder, NOT the live Apple Music managed
+    # media library (~/Music/Music/Media/Music), where files could clobber the
+    # user's real library.
+    assert str(cfg.output_dir).endswith("YouTube Sets")
 
 
 def test_config_reads_environment(monkeypatch):
@@ -40,13 +43,14 @@ def test_config_reads_environment(monkeypatch):
 
 def test_output_dir_expands_tilde(monkeypatch):
     # A `~`-prefixed OUTPUT_DIR (as shipped in .env.example) must resolve to a
-    # real absolute path, not a literal "~" directory created in the cwd.
-    monkeypatch.setenv("OUTPUT_DIR", "~/Music/Music/Media/Music")
+    # real absolute path, not a literal "~" directory created in the cwd. The
+    # default value also contains a space, which must survive expansion.
+    monkeypatch.setenv("OUTPUT_DIR", "~/Music/YouTube Sets")
     cfg = load_config()
     assert cfg.output_dir.is_absolute()
     assert "~" not in str(cfg.output_dir)
     assert str(cfg.output_dir).startswith(os.path.expanduser("~"))
-    assert str(cfg.output_dir).endswith("Media/Music")
+    assert str(cfg.output_dir).endswith("YouTube Sets")
 
 
 def test_metadata_defaults():

@@ -49,10 +49,21 @@ def single_track_path(
     artist: str,
     album: str,
     title: str,
+    video_id: str,
 ) -> Path:
-    """v1 single track destination: OUTPUT_DIR/<Artist>/<Set>/<Title>.m4a."""
+    """Single-track destination: OUTPUT_DIR/<Artist>/<Set>/<Title> [<video_id>].m4a.
+
+    The trailing ``[<video_id>]`` is the safety invariant: it ties each file to its
+    exact source video, so two *different* videos that resolve to the same
+    Artist/Set/Title land at distinct paths and can never silently overwrite each
+    other inside the library. Re-downloading the *same* video maps to the same path
+    (an intentional in-place refresh, which is fine).
+    """
     set_dir = set_output_dir(output_dir, album_artist, artist, album, title)
-    return set_dir / f"{sanitize_filename(title or 'Untitled')}.m4a"
+    name = sanitize_filename(title or "Untitled")
+    vid = re.sub(r"[^A-Za-z0-9_-]", "", video_id or "")  # YouTube id charset only
+    suffix = f" [{vid}]" if vid else ""
+    return set_dir / f"{name}{suffix}.m4a"
 
 
 def track_filename(index: int, title: str) -> str:

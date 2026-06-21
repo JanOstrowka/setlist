@@ -43,9 +43,49 @@ def test_set_output_dir_sanitizes(tmp_path):
     assert d == Path(tmp_path) / "AC-DC" / "Back- In"
 
 
-def test_single_track_path(tmp_path):
-    p = single_track_path(tmp_path, "DJ Test", "DJ Test", "Sunset Set", "Opening")
-    assert p == Path(tmp_path) / "DJ Test" / "Sunset Set" / "Opening.m4a"
+def test_single_track_path_uses_safe_scheme_with_video_id(tmp_path):
+    # OUTPUT_DIR/<Artist>/<Set>/<Title> [<video_id>].m4a
+    p = single_track_path(tmp_path, "DJ Test", "DJ Test", "Sunset Set", "Opening", "abc123XYZ")
+    assert p == Path(tmp_path) / "DJ Test" / "Sunset Set" / "Opening [abc123XYZ].m4a"
+
+
+def test_single_track_path_unique_per_video(tmp_path):
+    # Two different source videos with IDENTICAL Artist/Set/Title must map to
+    # distinct paths (in the same set folder) so neither can silently overwrite
+    # the other.
+    base = (tmp_path, "DJ Test", "DJ Test", "Sunset Set", "Opening")
+    p1 = single_track_path(*base, "vid_AAA")
+    p2 = single_track_path(*base, "vid_BBB")
+    assert p1 != p2
+    assert p1.parent == p2.parent  # same <Artist>/<Set>/ organization preserved
+
+
+def test_single_track_path_same_video_is_stable(tmp_path):
+    # Re-downloading the same video resolves to the same path (intentional
+    # in-place refresh is allowed).
+    base = (tmp_path, "DJ Test", "DJ Test", "Sunset Set", "Opening")
+    assert single_track_path(*base, "vid_AAA") == single_track_path(*base, "vid_AAA")
+
+
+def test_single_track_path_sanitizes_video_id(tmp_path):
+    # A hostile/odd video_id can't escape the filename component.
+    p = single_track_path(tmp_path, "DJ Test", "DJ Test", "Sunset Set", "Opening", "../../evil id")
+    assert p.parent == Path(tmp_path) / "DJ Test" / "Sunset Set"
+    assert p.name == "Opening [evilid].m4a"
+
+
+def test_different_videos_do_not_overwrite_on_save(tmp_path):
+    # End-to-end overwrite guard: saving two different videos that share
+    # Artist/Set/Title keeps BOTH files with their distinct content.
+    meta = ("DJ Test", "DJ Test", "Sunset Set", "Opening")
+    p1 = single_track_path(tmp_path, *meta, "vid_AAA")
+    p2 = single_track_path(tmp_path, *meta, "vid_BBB")
+    for i, dest in enumerate((p1, p2)):
+        src = tmp_path / f"src{i}.m4a"
+        src.write_bytes(bytes([i]))
+        save(src, dest)
+    assert p1.exists() and p2.exists()
+    assert p1.read_bytes() != p2.read_bytes()
 
 
 def test_track_filename():
