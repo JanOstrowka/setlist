@@ -1,7 +1,22 @@
+import dataclasses
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
+from app import main as main_module
+from app.core import tracklist_1001
 from app.main import app
 from app.models import MetadataFields, Track
+
+_FIXTURE = (
+    Path(__file__).parent
+    / "fixtures"
+    / "1001tracklists_john_summit_coachella_2026.md"
+)
+_1001_URL = (
+    "https://www.1001tracklists.com/tracklist/2wtl1821/"
+    "john-summit-do-lab-stage-coachella-festival-weekend-1-united-states-2026-04-10.html"
+)
 
 
 def test_recent_returns_list(monkeypatch):
@@ -65,3 +80,37 @@ def test_download_split_accepts_tracks_returns_job(monkeypatch):
     })
     assert resp.status_code == 200
     assert "job_id" in resp.json()
+
+
+def test_parse_tracklist_detects_1001_url(monkeypatch):
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    md = _FIXTURE.read_text(encoding="utf-8")
+    # Stub the network fetch with the committed fixture; give the route a key.
+    monkeypatch.setattr(
+        tracklist_1001, "fetch_1001tracklists_markdown",
+        lambda url, api_key, timeout=120.0: md,
+    )
+    monkeypatch.setattr(
+        main_module, "cfg",
+        dataclasses.replace(main_module.cfg, firecrawl_api_key="fc-test"),
+    )
+    client = TestClient(app)
+    resp = client.post("/parse-tracklist", json={"text": _1001_URL})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "1001tracklists"
+    assert len(data["tracks"]) == 24
+    assert data["tracks"][0]["start"] == 0.0
+    assert data["album_artist"] == "John Summit"
+
+
+def test_parse_tracklist_1001_without_key_returns_400(monkeypatch):
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    monkeypatch.setattr(
+        main_module, "cfg",
+        dataclasses.replace(main_module.cfg, firecrawl_api_key=None),
+    )
+    client = TestClient(app)
+    resp = client.post("/parse-tracklist", json={"text": _1001_URL})
+    assert resp.status_code == 400
+    assert "FIRECRAWL_API_KEY" in resp.json()["detail"]

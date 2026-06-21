@@ -17,7 +17,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_NAME, init_env, load_config
-from .core import downloader, library, metadata_ai, resolver, splitter, tagger, tracklist
+from .core import (
+    downloader,
+    library,
+    metadata_ai,
+    resolver,
+    splitter,
+    tagger,
+    tracklist,
+    tracklist_1001,
+)
 from .models import (
     DownloadRequest,
     ProgressEvent,
@@ -273,6 +282,17 @@ def download_endpoint(req: DownloadRequest) -> dict:
 
 @app.post("/parse-tracklist", response_model=Tracklist)
 def parse_tracklist_endpoint(req: ParseTracklistRequest) -> Tracklist:
+    text = (req.text or "").strip()
+    # A pasted 1001tracklists URL is fetched + parsed via Firecrawl (Cloudflare-gated);
+    # anything else is treated as a manually pasted tracklist as before.
+    if tracklist_1001.is_1001_url(text):
+        try:
+            return tracklist_1001.parse_1001tracklists(text, cfg)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not fetch 1001tracklists: {resolver.augment_error(exc)}",
+            )
     return tracklist.parse_manual_tracklist(req.text, req.duration or None)
 
 
