@@ -78,3 +78,19 @@ button.ghost { background: transparent; }
   .preview-grid { grid-template-columns: 1fr; }
   .cover { width: 100%; height: auto; aspect-ratio: 1 / 1; }
 }
+
+.tracklist { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.tl-head { display: flex; align-items: center; justify-content: space-between; }
+.tl-head h3 { font-size: 14px; margin: 0; }
+.tl-source { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.track-rows { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.track-row { display: grid; grid-template-columns: 72px 1fr 1fr auto; gap: 6px; align-items: center; }
+.track-row input { padding: 7px 8px; font-size: 13px; }
+.track-row .start { text-align: center; }
+.row-btns { display: flex; gap: 2px; }
+.row-btns button { padding: 4px 8px; font-size: 12px; line-height: 1; }
+.paste { margin-top: 8px; }
+.paste summary { color: var(--muted); font-size: 13px; cursor: pointer; }
+.paste textarea { width: 100%; margin-top: 8px; padding: 10px 12px; background: #11141a; border: 1px solid var(--line); border-radius: 8px; color: var(--text); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.paste .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.paste code { background: #11141a; padding: 1px 5px; border-radius: 4px; font-size: 11px; }

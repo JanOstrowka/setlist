@@ -1,5 +1,28 @@
 const $ = (id) => document.getElementById(id);
-const state = { videoId: "", url: "", detectedAlac: "" };
+const state = { videoId: "", url: "", detectedAlac: "", duration: 0 };
+const tl = { source: "none", tracks: [] };
+
+function secondsToClock(s) {
+  if (s == null || s === "" || isNaN(s)) return "";
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+function clockToSeconds(str) {
+  const t = (str || "").trim();
+  if (!t) return null;
+  const parts = t.split(":").map((p) => parseInt(p, 10));
+  if (parts.some((n) => isNaN(n))) return null;
+  let h = 0, m = 0, s = 0;
+  if (parts.length === 3) [h, m, s] = parts;
+  else if (parts.length === 2) [m, s] = parts;
+  else [s] = parts;
+  return h * 3600 + m * 60 + s;
+}
 
 async function resolve() {
   const url = $("url").value.trim();
@@ -20,6 +43,7 @@ async function resolve() {
     state.videoId = data.video_id;
     state.url = url;
     state.detectedAlac = data.detected_line;
+    state.duration = data.duration || 0;
     $("cover").src = data.cover || "";
     $("title").value = data.metadata.title || "";
     $("artist").value = data.metadata.artist || "";
@@ -28,7 +52,9 @@ async function resolve() {
     $("year").value = data.metadata.year ?? "";
     $("genre").value = data.metadata.genre || "";
     $("compilation").checked = !!data.metadata.compilation;
+    setTracklist(data.tracklist || { source: "none", tracks: [] });
     updateDetected();
+    updateSplitVisibility();
     show("preview");
     setStatus("");
   } catch (err) {
@@ -36,6 +62,118 @@ async function resolve() {
   } finally {
     $("resolveBtn").disabled = false;
   }
+}
+
+function setTracklist(data) {
+  tl.source = data.source || "none";
+  tl.tracks = (data.tracks || []).map((t) => ({
+    start: t.start ?? null,
+    title: t.title || "",
+    artist: t.artist || "",
+  }));
+  renderTracklist();
+}
+
+function renderTracklist() {
+  const sourceLabel = {
+    chapters: "from YouTube chapters",
+    description: "from description timestamps",
+    manual: "from pasted text",
+    none: "none found — add or paste below",
+  }[tl.source] || "";
+  $("tlSource").textContent = sourceLabel ? `(${sourceLabel})` : "";
+  const rows = $("trackRows");
+  rows.innerHTML = "";
+  tl.tracks.forEach((t, i) => {
+    const row = document.createElement("div");
+    row.className = "track-row";
+
+    const start = document.createElement("input");
+    start.className = "start";
+    start.value = secondsToClock(t.start);
+    start.placeholder = "0:00";
+    start.addEventListener("change", () => { t.start = clockToSeconds(start.value); });
+
+    const title = document.createElement("input");
+    title.value = t.title;
+    title.placeholder = "Title";
+    title.addEventListener("change", () => { t.title = title.value; });
+
+    const artist = document.createElement("input");
+    artist.value = t.artist;
+    artist.placeholder = "Artist";
+    artist.addEventListener("change", () => { t.artist = artist.value; });
+
+    const btns = document.createElement("div");
+    btns.className = "row-btns";
+    btns.appendChild(iconBtn("↑", () => moveTrack(i, -1)));
+    btns.appendChild(iconBtn("↓", () => moveTrack(i, 1)));
+    btns.appendChild(iconBtn("✕", () => removeTrack(i)));
+
+    row.append(start, title, artist, btns);
+    rows.appendChild(row);
+  });
+}
+
+function iconBtn(label, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "ghost";
+  b.textContent = label;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function readRowsFromDOM() {
+  // Inputs already write back on change; this is a safety re-sync before submit.
+  const rows = $("trackRows").querySelectorAll(".track-row");
+  rows.forEach((row, i) => {
+    const [start, title, artist] = row.querySelectorAll("input");
+    tl.tracks[i].start = clockToSeconds(start.value);
+    tl.tracks[i].title = title.value;
+    tl.tracks[i].artist = artist.value;
+  });
+}
+
+function addTrack() {
+  readRowsFromDOM();
+  tl.tracks.push({ start: null, title: "", artist: "" });
+  renderTracklist();
+}
+
+function removeTrack(i) {
+  readRowsFromDOM();
+  tl.tracks.splice(i, 1);
+  renderTracklist();
+}
+
+function moveTrack(i, dir) {
+  readRowsFromDOM();
+  const j = i + dir;
+  if (j < 0 || j >= tl.tracks.length) return;
+  [tl.tracks[i], tl.tracks[j]] = [tl.tracks[j], tl.tracks[i]];
+  renderTracklist();
+}
+
+async function parsePasted() {
+  const text = $("pasteBox").value;
+  if (!text.trim()) return;
+  try {
+    const res = await fetch("/parse-tracklist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, duration: state.duration }),
+    });
+    if (!res.ok) throw new Error("Parse failed");
+    setTracklist(await res.json());
+  } catch (err) {
+    setStatus("Error: " + err.message, true);
+  }
+}
+
+function updateSplitVisibility() {
+  $("tracklist").classList.toggle("hidden", !$("split").checked);
+  $("downloadBtn").textContent = $("split").checked ? "Download & split" : "Download & tag";
 }
 
 function updateDetected() {
@@ -48,30 +186,30 @@ function updateDetected() {
   $("detected").textContent = line;
 }
 
+function albumMetadata() {
+  return {
+    title: $("title").value,
+    artist: $("artist").value,
+    album: $("album").value,
+    album_artist: $("albumArtist").value,
+    year: $("year").value ? parseInt($("year").value, 10) : null,
+    genre: $("genre").value,
+    comment: state.url,
+    compilation: $("compilation").checked,
+  };
+}
+
 async function download() {
   if (!state.videoId) return;
+  if ($("split").checked) return downloadSplit();
   const body = {
     video_id: state.videoId,
     url: state.url,
     format: $("aac256").checked ? "aac256" : "alac",
     cover: "keep",
-    metadata: {
-      title: $("title").value,
-      artist: $("artist").value,
-      album: $("album").value,
-      album_artist: $("albumArtist").value,
-      year: $("year").value ? parseInt($("year").value, 10) : null,
-      genre: $("genre").value,
-      comment: state.url,
-      compilation: $("compilation").checked,
-    },
+    metadata: albumMetadata(),
   };
-  $("downloadBtn").disabled = true;
-  $("revealDone").style.display = "none";
-  show("progress");
-  setBar(0);
-  setStatus("");
-  $("progressMsg").textContent = "Starting…";
+  startProgress();
   try {
     const res = await fetch("/download", {
       method: "POST",
@@ -80,30 +218,83 @@ async function download() {
     });
     if (!res.ok) throw new Error("Download request failed");
     const { job_id } = await res.json();
-    const es = new EventSource(`/progress/${job_id}`);
-    es.onmessage = (e) => {
-      const ev = JSON.parse(e.data);
-      $("progressMsg").textContent = `${ev.stage}: ${ev.message}`;
-      if (["download", "encode", "tag"].includes(ev.stage)) setBar(ev.pct);
-      if (ev.stage === "done") {
-        setBar(100);
-        es.close();
-        onDone(ev.file_path);
-      }
-      if (ev.stage === "error") {
-        es.close();
-        setStatus("Error: " + ev.message, true);
-        $("downloadBtn").disabled = false;
-      }
-    };
-    es.onerror = () => {
-      es.close();
-      $("downloadBtn").disabled = false;
-    };
+    streamProgress(job_id);
   } catch (err) {
     setStatus("Error: " + err.message, true);
     $("downloadBtn").disabled = false;
   }
+}
+
+async function downloadSplit() {
+  readRowsFromDOM();
+  const tracks = tl.tracks
+    .map((t) => ({ start: t.start, title: t.title, artist: t.artist }))
+    .filter((t) => t.title || t.artist || t.start != null);
+  if (tracks.length === 0) {
+    setStatus("Add at least one track to split.", true);
+    return;
+  }
+  if (tracks.some((t) => t.start == null)) {
+    setStatus("Every track needs a start time before splitting.", true);
+    return;
+  }
+  const body = {
+    video_id: state.videoId,
+    url: state.url,
+    format: $("aac256").checked ? "aac256" : "alac",
+    cover: "keep",
+    metadata: albumMetadata(),
+    tracks,
+  };
+  startProgress();
+  try {
+    const res = await fetch("/download-split", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Split request failed");
+    }
+    const { job_id } = await res.json();
+    streamProgress(job_id);
+  } catch (err) {
+    setStatus("Error: " + err.message, true);
+    $("downloadBtn").disabled = false;
+  }
+}
+
+function startProgress() {
+  $("downloadBtn").disabled = true;
+  $("revealDone").style.display = "none";
+  show("progress");
+  setBar(0);
+  setStatus("");
+  $("progressMsg").textContent = "Starting…";
+}
+
+function streamProgress(jobId) {
+  const es = new EventSource(`/progress/${jobId}`);
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    $("progressMsg").textContent = `${ev.stage}: ${ev.message}`;
+    if (["download", "encode", "split", "tag"].includes(ev.stage)) setBar(ev.pct);
+    if (ev.stage === "done") {
+      setBar(100);
+      es.close();
+      onDone(ev.file_path);
+    }
+    if (ev.stage === "error") {
+      es.close();
+      setStatus("Error: " + ev.message, true);
+      $("downloadBtn").disabled = false;
+    }
+  };
+  es.onerror = () => {
+    es.close();
+    $("downloadBtn").disabled = false;
+  };
 }
 
 function onDone(path) {
@@ -164,6 +355,9 @@ window.addEventListener("DOMContentLoaded", () => {
   $("resolveBtn").addEventListener("click", resolve);
   $("downloadBtn").addEventListener("click", download);
   $("aac256").addEventListener("change", updateDetected);
+  $("split").addEventListener("change", updateSplitVisibility);
+  $("addTrackBtn").addEventListener("click", addTrack);
+  $("parseBtn").addEventListener("click", parsePasted);
   $("url").addEventListener("keydown", (e) => {
     if (e.key === "Enter") resolve();
   });

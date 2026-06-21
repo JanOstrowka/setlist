@@ -32,11 +32,24 @@
           </div>
           <label class="check"><input id="compilation" type="checkbox" /> Compilation (various artists)</label>
           <label class="check"><input id="aac256" type="checkbox" /> AAC 256 kbps (smaller files)</label>
-          <label class="check disabled" title="Coming in v2">
-            <input type="checkbox" disabled /> Split into separate tracks (v2)
-          </label>
+          <label class="check"><input id="split" type="checkbox" /> Split into separate tracks</label>
         </div>
       </div>
+
+      <section id="tracklist" class="tracklist hidden">
+        <div class="tl-head">
+          <h3>Tracklist <span id="tlSource" class="tl-source"></span></h3>
+          <button id="addTrackBtn" class="ghost" type="button">+ Add track</button>
+        </div>
+        <div id="trackRows" class="track-rows"></div>
+        <details class="paste">
+          <summary>Paste a tracklist (e.g. from 1001tracklists)</summary>
+          <textarea id="pasteBox" rows="5" placeholder="1. Artist - Title [12:34]&#10;Artist - Title&#10;1:02:33 Title"></textarea>
+          <button id="parseBtn" class="ghost" type="button">Parse pasted tracklist</button>
+          <p class="hint">Recognizes <code>N. Artist - Title [time]</code>, <code>Artist - Title</code>, and <code>time Title</code>. Missing times can be filled in above.</p>
+        </details>
+      </section>
+
       <p id="detected" class="detected"></p>
       <button id="downloadBtn" class="primary">Download &amp; tag</button>
     </section>
