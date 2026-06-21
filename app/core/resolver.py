@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 
@@ -26,6 +26,7 @@ class RawInfo:
     has_chapters: bool
     best_audio_label: str
     formats_summary: str
+    chapters: list[dict] = field(default_factory=list)
 
 
 def _best_audio(formats: list[dict]) -> dict | None:
@@ -81,6 +82,7 @@ def resolve(url: str) -> RawInfo:
         has_chapters=bool(info.get("chapters")),
         best_audio_label=_best_audio_label(best),
         formats_summary=_formats_summary(best),
+        chapters=info.get("chapters") or [],
     )
 
 
