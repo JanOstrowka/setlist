@@ -71,6 +71,10 @@ function setTracklist(data) {
     title: t.title || "",
     artist: t.artist || "",
   }));
+  // A source-provided album/artist (e.g. from a 1001tracklists H1) fills the
+  // shared album fields; empty values never clobber the AI-proposed metadata.
+  if (data.album_artist) $("albumArtist").value = data.album_artist;
+  if (data.album) $("album").value = data.album;
   renderTracklist();
 }
 
@@ -79,6 +83,7 @@ function renderTracklist() {
     chapters: "from YouTube chapters",
     description: "from description timestamps",
     manual: "from pasted text",
+    "1001tracklists": "from 1001tracklists",
     none: "none found — add or paste below",
   }[tl.source] || "";
   $("tlSource").textContent = sourceLabel ? `(${sourceLabel})` : "";
@@ -168,6 +173,40 @@ async function parsePasted() {
     setTracklist(await res.json());
   } catch (err) {
     setStatus("Error: " + err.message, true);
+  }
+}
+
+async function fetch1001() {
+  const url = $("url1001").value.trim();
+  const note = $("tl1001Note");
+  if (!url) return;
+  const btn = $("fetch1001Btn");
+  btn.disabled = true;
+  note.className = "hint";
+  note.textContent = "Fetching from 1001tracklists… this can take ~30s (it renders the page and bypasses the bot wall).";
+  try {
+    const res = await fetch("/parse-tracklist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: url, duration: state.duration }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Fetch failed");
+    }
+    const data = await res.json();
+    setTracklist(data);
+    // A fetched tracklist means the user wants to split — reveal the editor.
+    if ((data.tracks || []).length > 0) {
+      $("split").checked = true;
+      updateSplitVisibility();
+    }
+    note.textContent = data.note || `Loaded ${(data.tracks || []).length} tracks.`;
+  } catch (err) {
+    note.className = "hint err-text";
+    note.textContent = "Error: " + err.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -358,8 +397,12 @@ window.addEventListener("DOMContentLoaded", () => {
   $("split").addEventListener("change", updateSplitVisibility);
   $("addTrackBtn").addEventListener("click", addTrack);
   $("parseBtn").addEventListener("click", parsePasted);
+  $("fetch1001Btn").addEventListener("click", fetch1001);
   $("url").addEventListener("keydown", (e) => {
     if (e.key === "Enter") resolve();
+  });
+  $("url1001").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") fetch1001();
   });
   loadRecent();
 });

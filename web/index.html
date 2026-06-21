@@ -36,6 +36,15 @@
         </div>
       </div>
 
+      <section id="from1001" class="from1001">
+        <label class="from1001-label" for="url1001">1001tracklists URL <span class="opt">— paste it and we fetch the tracklist + cue times for you</span></label>
+        <div class="from1001-row">
+          <input id="url1001" type="text" placeholder="https://www.1001tracklists.com/tracklist/…" autocomplete="off" />
+          <button id="fetch1001Btn" class="ghost" type="button">Fetch tracklist</button>
+        </div>
+        <p id="tl1001Note" class="hint"></p>
+      </section>
+
       <section id="tracklist" class="tracklist hidden">
         <div class="tl-head">
           <h3>Tracklist <span id="tlSource" class="tl-source"></span></h3>
@@ -43,7 +52,7 @@
         </div>
         <div id="trackRows" class="track-rows"></div>
         <details class="paste">
-          <summary>Paste a tracklist (e.g. from 1001tracklists)</summary>
+          <summary>Or paste a tracklist by hand</summary>
           <textarea id="pasteBox" rows="5" placeholder="1. Artist - Title [12:34]&#10;Artist - Title&#10;1:02:33 Title"></textarea>
           <button id="parseBtn" class="ghost" type="button">Parse pasted tracklist</button>
           <p class="hint">Recognizes <code>N. Artist - Title [time]</code>, <code>Artist - Title</code>, and <code>time Title</code>. Missing times can be filled in above.</p>

@@ -79,6 +79,13 @@ button.ghost { background: transparent; }
   .cover { width: 100%; height: auto; aspect-ratio: 1 / 1; }
 }
 
+.from1001 { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.from1001-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.from1001-label .opt { opacity: 0.85; }
+.from1001-row { display: flex; gap: 8px; }
+.from1001 .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; min-height: 16px; }
+.from1001 .hint.err-text { color: var(--err); }
+
 .tracklist { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
 .tl-head { display: flex; align-items: center; justify-content: space-between; }
 .tl-head h3 { font-size: 14px; margin: 0; }
