@@ -6,9 +6,10 @@ from typing import Optional
 from ..models import Track, Tracklist
 from .resolver import RawInfo
 
-# Future tracklist sources (deferred): 1001tracklists scraping (Cloudflare-gated)
-# and audio fingerprinting (AudD/Panako) would each add another parse_*() producer
-# returning list[Track]; build_tracklist() would consult them after description.
+# Additional tracklist sources plug in here as extra parse_*() producers returning
+# the same Track/Tracklist types: 1001tracklists scraping lives in tracklist_1001.py
+# (Firecrawl-fetched, since the site is Cloudflare-gated). Audio fingerprinting
+# (AudD/Panako) is still deferred and would slot in the same way.
 
 _LEADING_INDEX = re.compile(r"^\s*\d{1,3}[.)]\s+")
 _LEADING_TS = re.compile(r"^\s*\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*[-–—)]?\s*")
