@@ -1,0 +1,30 @@
+# Brainstorm / tooling artifacts
+.superpowers/
+
+# Secrets & environment (keep the example)
+.env
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Build artifacts
+dist/
+build/
+
+# Node
+node_modules/
+
+# macOS
+.DS_Store
+
+# Downloads / audio output
+/downloads/
+*.m4a
