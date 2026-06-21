@@ -7,7 +7,7 @@ from pathlib import Path
 
 from mutagen.mp4 import MP4, MP4Cover
 
-from ..models import MetadataFields
+from ..models import MetadataFields, Track
 
 
 def write_tags(
@@ -51,6 +51,31 @@ def write_tags(
         audio.pop("covr", None)
         audio.save()
         _embed_cover_atomicparsley(path, cover_jpeg)
+
+
+def tag_album(
+    files: list[Path],
+    tracks: list[Track],
+    album_meta: MetadataFields,
+    cover_jpeg: bytes | None = None,
+) -> None:
+    """Tag a set of cut files as ONE cohesive gapless album.
+
+    Shared across tracks: ©alb (album), aART (album artist), ©day, ©gen, ©cmt,
+    covr, disk=(1,1), pgap=1. Per track: ©nam (title), ©ART (track artist,
+    falling back to album artist), sequential trkn=(n, total). cpil=1 when the
+    track artists differ (various-artists set) or album_meta.compilation is set.
+    """
+    total = len(files)
+    distinct_artists = {(t.artist or "").strip() for t in tracks if (t.artist or "").strip()}
+    various = len(distinct_artists) > 1
+    for i, (path, track) in enumerate(zip(files, tracks), start=1):
+        per_track = album_meta.model_copy(update={
+            "title": track.title or album_meta.title or f"Track {i}",
+            "artist": track.artist or album_meta.album_artist or album_meta.artist,
+            "compilation": various or album_meta.compilation,
+        })
+        write_tags(path, per_track, cover_jpeg, track=(i, total), disc=(1, 1))
 
 
 def _embed_cover_atomicparsley(path: Path, cover_jpeg: bytes) -> None:
