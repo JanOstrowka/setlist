@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>__APP_NAME__</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>__APP_NAME__</h1>
+    <p class="sub">Paste a URL, review the metadata, and save a tagged ALAC file to drag into Apple Music.</p>
+
+    <section class="row">
+      <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" />
+      <button id="resolveBtn">Resolve</button>
+    </section>
+
+    <p id="status" class=""></p>
+
+    <section id="preview" class="card hidden">
+      <div class="preview-grid">
+        <img id="cover" class="cover" alt="cover preview" />
+        <div class="fields">
+          <label>Title <input id="title" type="text" /></label>
+          <label>Artist <input id="artist" type="text" /></label>
+          <label>Album <input id="album" type="text" /></label>
+          <label>Album Artist <input id="albumArtist" type="text" /></label>
+          <div class="two">
+            <label>Year <input id="year" type="number" inputmode="numeric" /></label>
+            <label>Genre <input id="genre" type="text" /></label>
+          </div>
+          <label class="check"><input id="compilation" type="checkbox" /> Compilation (various artists)</label>
+          <label class="check"><input id="aac256" type="checkbox" /> AAC 256 kbps (smaller files)</label>
+          <label class="check disabled" title="Coming in v2">
+            <input type="checkbox" disabled /> Split into separate tracks (v2)
+          </label>
+        </div>
+      </div>
+      <p id="detected" class="detected"></p>
+      <button id="downloadBtn" class="primary">Download &amp; tag</button>
+    </section>
+
+    <section id="progress" class="card hidden">
+      <div class="bar-track"><div id="bar" class="bar"></div></div>
+      <p id="progressMsg"></p>
+      <button id="revealDone" class="ghost" style="display:none">Reveal in Finder</button>
+    </section>
+
+    <section class="recent">
+      <h2>Recent</h2>
+      <ul id="recent"></ul>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
