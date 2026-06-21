@@ -17,8 +17,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import APP_NAME, init_env, load_config
-from .core import downloader, library, metadata_ai, resolver, tagger
-from .models import DownloadRequest, ProgressEvent, ResolveRequest, ResolveResponse
+from .core import downloader, library, metadata_ai, resolver, splitter, tagger, tracklist
+from .models import (
+    DownloadRequest,
+    ProgressEvent,
+    ResolveRequest,
+    ResolveResponse,
+    SplitDownloadRequest,
+    Tracklist,
+)
 
 init_env()
 cfg = load_config()
@@ -46,7 +53,7 @@ class JobManager:
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
-    def submit(self, req: DownloadRequest) -> str:
+    def submit(self, req: "DownloadRequest | SplitDownloadRequest") -> str:
         job_id = uuid4().hex
         self.jobs[job_id] = queue.Queue()
         self._emit(job_id, ProgressEvent(stage="queued", pct=0.0, message="Queued"))
@@ -65,7 +72,10 @@ class JobManager:
         while True:
             job_id, req = self.work.get()
             try:
-                self._process(job_id, req)
+                if isinstance(req, SplitDownloadRequest):
+                    self._process_split(job_id, req)
+                else:
+                    self._process(job_id, req)
             except Exception as exc:  # surface any pipeline failure to the UI
                 self._emit(job_id, ProgressEvent(stage="error", pct=0.0, message=resolver.augment_error(exc)))
 
@@ -116,6 +126,70 @@ class JobManager:
             })
             self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message="Saved", file_path=str(dest)))
 
+    def _process_split(self, job_id: str, req: SplitDownloadRequest) -> None:
+        with tempfile.TemporaryDirectory(prefix="setlist-") as tmp:
+            tmpdir = Path(tmp)
+
+            self._emit(job_id, ProgressEvent(stage="download", pct=0.0, message="Starting download"))
+            src = downloader.download_audio(
+                req.url,
+                tmpdir,
+                lambda pct: self._emit(job_id, ProgressEvent(stage="download", pct=pct, message="Downloading full set")),
+                self.cfg.pot_provider_url,
+            )
+
+            target = "ALAC (lossless)" if req.format == "alac" else "AAC 256 kbps"
+            self._emit(job_id, ProgressEvent(stage="encode", pct=0.0, message=f"Encoding full set to {target}"))
+            full = tmpdir / "full.m4a"
+            downloader.encode(src, full, req.format)
+            self._emit(job_id, ProgressEvent(stage="encode", pct=100.0, message="Encoded"))
+
+            if req.cover == "keep":
+                cover = resolver.read_cached_cover(req.video_id)
+            else:
+                try:
+                    cover = resolver.to_square_jpeg(resolver.data_uri_to_bytes(req.cover))
+                except Exception:
+                    cover = None
+
+            tracks = tracklist.normalize(req.tracks)
+            if not tracks:
+                raise RuntimeError("No valid tracks to split")
+            if any(t.start is None for t in tracks):
+                raise RuntimeError("Some tracks are missing start times; fill them in before splitting")
+
+            total = len(tracks)
+            self._emit(job_id, ProgressEvent(stage="split", pct=0.0, message=f"Splitting into {total} tracks"))
+            cut_dir = tmpdir / "cuts"
+
+            def on_track(i: int, n: int, title: str) -> None:
+                self._emit(job_id, ProgressEvent(stage="split", pct=i / n * 100.0, message=f"Cut {i}/{n}: {title or 'Untitled'}"))
+
+            files = splitter.split_file(full, tracks, cut_dir, on_track=on_track)
+
+            self._emit(job_id, ProgressEvent(stage="tag", pct=0.0, message="Tagging album"))
+            tagger.tag_album(files, tracks, req.metadata, cover)
+            self._emit(job_id, ProgressEvent(stage="tag", pct=100.0, message="Tagged"))
+
+            set_dir = library.set_output_dir(
+                self.cfg.output_dir,
+                req.metadata.album_artist,
+                req.metadata.artist,
+                req.metadata.album,
+                req.metadata.title,
+            )
+            library.ensure_output_dir(set_dir)
+            for f in files:
+                library.save(f, set_dir / f.name)
+            library.write_cover(set_dir, cover)
+            library.record_recent(self.cfg.output_dir, {
+                "path": str(set_dir),
+                "title": req.metadata.album or req.metadata.title,
+                "artist": req.metadata.album_artist or req.metadata.artist,
+                "album": req.metadata.album,
+            })
+            self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message=f"Saved {total} tracks", file_path=str(set_dir)))
+
 
 def _self_update_yt_dlp() -> None:
     try:
@@ -141,6 +215,11 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
 class RevealRequest(BaseModel):
     path: str
+
+
+class ParseTracklistRequest(BaseModel):
+    text: str
+    duration: int = 0
 
 
 @app.get("/")
@@ -173,6 +252,7 @@ def resolve_endpoint(req: ResolveRequest) -> ResolveResponse:
             cover_uri = ""
 
     line = resolver.detected_line(raw.best_audio_label, cfg.default_format, str(cfg.output_dir))
+    tl = tracklist.build_tracklist(raw)
     return ResolveResponse(
         video_id=raw.video_id,
         duration=raw.duration,
@@ -181,11 +261,25 @@ def resolve_endpoint(req: ResolveRequest) -> ResolveResponse:
         formats=raw.formats_summary,
         detected_line=line,
         has_chapters=raw.has_chapters,
+        tracklist=tl,
     )
 
 
 @app.post("/download")
 def download_endpoint(req: DownloadRequest) -> dict:
+    job_id = jobs.submit(req)
+    return {"job_id": job_id}
+
+
+@app.post("/parse-tracklist", response_model=Tracklist)
+def parse_tracklist_endpoint(req: ParseTracklistRequest) -> Tracklist:
+    return tracklist.parse_manual_tracklist(req.text, req.duration or None)
+
+
+@app.post("/download-split")
+def download_split_endpoint(req: SplitDownloadRequest) -> dict:
+    if not req.tracks:
+        raise HTTPException(status_code=400, detail="No tracks provided")
     job_id = jobs.submit(req)
     return {"job_id": job_id}
 
