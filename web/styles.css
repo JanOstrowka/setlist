@@ -101,10 +101,22 @@ button.ghost { background: transparent; }
 .tl-head { display: flex; align-items: center; justify-content: space-between; }
 .tl-head h3 { font-size: 14px; margin: 0; }
 .tl-source { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
-.track-rows { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+/* The editor can hold a long list, so on wider viewports it flows into
+   multiple columns (auto-fill) and gracefully collapses to one on narrow ones. */
+.track-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 6px 16px;
+  margin: 10px 0;
+}
 .track-row { display: grid; grid-template-columns: 72px 1fr 1fr auto; gap: 6px; align-items: center; }
 .track-row input { padding: 7px 8px; font-size: 13px; }
 .track-row .start { text-align: center; }
+.track-row input.invalid, .track-row input.invalid:focus {
+  border-color: var(--err);
+  background: rgba(255, 107, 107, 0.12);
+  outline: none;
+}
 .row-btns { display: flex; gap: 2px; }
 .row-btns button { padding: 4px 8px; font-size: 12px; line-height: 1; }
 .paste-panel textarea { width: 100%; padding: 10px 12px; background: #11141a; border: 1px solid var(--line); border-radius: 8px; color: var(--text); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
@@ -112,3 +124,29 @@ button.ghost { background: transparent; }
 .paste-panel .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; min-height: 16px; }
 .paste-panel .hint.err-text { color: var(--err); }
 .paste-panel code { background: #11141a; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+
+/* Error callout rendered right beneath the main download/split CTA. */
+.cta-error {
+  display: none;
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--err);
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.4);
+}
+.cta-error.show { display: block; }
+
+/* The split toggle disables (greys) the tracklist UI instead of hiding it. */
+.tl-disabled { opacity: 0.55; }
+.tl-disabled .seg-toggle { pointer-events: none; }
+input:disabled, textarea:disabled { cursor: not-allowed; opacity: 0.7; }
+
+/* Give the tracklist room to breathe across columns on large screens. */
+@media (min-width: 980px) {
+  .container { max-width: 920px; }
+}
+@media (min-width: 1280px) {
+  .container { max-width: 1140px; }
+}

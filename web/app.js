@@ -54,7 +54,7 @@ async function resolve() {
     $("compilation").checked = !!data.metadata.compilation;
     setTracklist(data.tracklist || { source: "none", tracks: [] });
     updateDetected();
-    updateSplitVisibility();
+    updateSplitState();
     show("preview");
     setStatus("");
   } catch (err) {
@@ -98,6 +98,8 @@ function renderTracklist() {
     start.value = secondsToClock(t.start);
     start.placeholder = "0:00";
     start.addEventListener("change", () => { t.start = clockToSeconds(start.value); });
+    // Clearing the highlight as soon as the user edits the offending field.
+    start.addEventListener("input", () => start.classList.remove("invalid"));
 
     const title = document.createElement("input");
     title.value = t.title;
@@ -118,6 +120,8 @@ function renderTracklist() {
     row.append(start, title, artist, btns);
     rows.appendChild(row);
   });
+  // Re-rendered rows must inherit the current enabled/disabled split state.
+  setTracklistEnabled($("split").checked);
 }
 
 function iconBtn(label, onClick) {
@@ -184,7 +188,7 @@ async function parsePasted() {
     const n = (data.tracks || []).length;
     if (n > 0) {
       $("split").checked = true;
-      updateSplitVisibility();
+      updateSplitState();
     }
     note.textContent = n
       ? `Parsed ${n} track${n === 1 ? "" : "s"}. Review and fill any missing times below.`
@@ -220,7 +224,7 @@ async function fetch1001() {
     // A fetched tracklist means the user wants to split — reveal the editor.
     if ((data.tracks || []).length > 0) {
       $("split").checked = true;
-      updateSplitVisibility();
+      updateSplitState();
     }
     note.textContent = data.note || `Loaded ${(data.tracks || []).length} tracks.`;
   } catch (err) {
@@ -243,9 +247,25 @@ function setTlSource(mode) {
   $("srcPasteBtn").setAttribute("aria-checked", String(!fetchMode));
 }
 
-function updateSplitVisibility() {
-  $("tracklist").classList.toggle("hidden", !$("split").checked);
-  $("downloadBtn").textContent = $("split").checked ? "Download & split" : "Download & tag";
+// The split toggle enables/disables the tracklist UI instead of hiding it, so
+// the editor stays visible (greyed out) when splitting is off.
+function setTracklistEnabled(enabled) {
+  ["tlsource", "tracklist"].forEach((id) => {
+    const section = $(id);
+    if (!section) return;
+    section.classList.toggle("tl-disabled", !enabled);
+    section.setAttribute("aria-disabled", String(!enabled));
+    section
+      .querySelectorAll("input, textarea, button")
+      .forEach((el) => { el.disabled = !enabled; });
+  });
+}
+
+function updateSplitState() {
+  const on = $("split").checked;
+  setTracklistEnabled(on);
+  if (!on) clearTrackErrors();
+  $("downloadBtn").textContent = on ? "Download & split" : "Download & tag";
 }
 
 function updateDetected() {
@@ -292,24 +312,38 @@ async function download() {
     const { job_id } = await res.json();
     streamProgress(job_id);
   } catch (err) {
-    setStatus("Error: " + err.message, true);
+    setDownloadError("Error: " + err.message);
     $("downloadBtn").disabled = false;
   }
 }
 
 async function downloadSplit() {
   readRowsFromDOM();
+  clearTrackErrors();
+  clearDownloadError();
+  // A track counts as "active" if it has any content; empty rows are ignored.
+  const missing = [];
+  let activeCount = 0;
+  tl.tracks.forEach((t, i) => {
+    const active = t.title || t.artist || t.start != null;
+    if (!active) return;
+    activeCount += 1;
+    if (t.start == null) missing.push(i);
+  });
+  if (activeCount === 0) {
+    setDownloadError("Add at least one track to split.");
+    return;
+  }
+  if (missing.length) {
+    highlightMissingTimes(missing);
+    setDownloadError(
+      `Add a start time to ${missing.length} track${missing.length === 1 ? "" : "s"} before splitting.`
+    );
+    return;
+  }
   const tracks = tl.tracks
     .map((t) => ({ start: t.start, title: t.title, artist: t.artist }))
     .filter((t) => t.title || t.artist || t.start != null);
-  if (tracks.length === 0) {
-    setStatus("Add at least one track to split.", true);
-    return;
-  }
-  if (tracks.some((t) => t.start == null)) {
-    setStatus("Every track needs a start time before splitting.", true);
-    return;
-  }
   const body = {
     video_id: state.videoId,
     url: state.url,
@@ -332,7 +366,7 @@ async function downloadSplit() {
     const { job_id } = await res.json();
     streamProgress(job_id);
   } catch (err) {
-    setStatus("Error: " + err.message, true);
+    setDownloadError("Error: " + err.message);
     $("downloadBtn").disabled = false;
   }
 }
@@ -343,6 +377,7 @@ function startProgress() {
   show("progress");
   setBar(0);
   setStatus("");
+  clearDownloadError();
   $("progressMsg").textContent = "Starting…";
 }
 
@@ -359,7 +394,7 @@ function streamProgress(jobId) {
     }
     if (ev.stage === "error") {
       es.close();
-      setStatus("Error: " + ev.message, true);
+      setDownloadError("Error: " + ev.message);
       $("downloadBtn").disabled = false;
     }
   };
@@ -419,6 +454,36 @@ function setStatus(msg, isError) {
   el.className = isError ? "err" : "";
 }
 
+// Errors that belong to the main download/split action render in a callout
+// right next to the button, so the user sees them where they clicked.
+function setDownloadError(msg) {
+  const el = $("downloadError");
+  el.textContent = msg || "";
+  el.classList.toggle("show", !!msg);
+}
+
+function clearDownloadError() {
+  setDownloadError("");
+}
+
+// Removing the red highlight from every track-time field.
+function clearTrackErrors() {
+  $("trackRows")
+    .querySelectorAll(".start.invalid")
+    .forEach((el) => el.classList.remove("invalid"));
+}
+
+// Highlighting the start-time fields of the exact rows missing a time.
+function highlightMissingTimes(indices) {
+  const rows = $("trackRows").querySelectorAll(".track-row");
+  indices.forEach((i) => {
+    const input = rows[i] && rows[i].querySelector(".start");
+    if (input) input.classList.add("invalid");
+  });
+  const first = rows[indices[0]] && rows[indices[0]].querySelector(".start");
+  if (first) first.focus();
+}
+
 function show(id) {
   $(id).classList.remove("hidden");
 }
@@ -427,7 +492,7 @@ window.addEventListener("DOMContentLoaded", () => {
   $("resolveBtn").addEventListener("click", resolve);
   $("downloadBtn").addEventListener("click", download);
   $("aac256").addEventListener("change", updateDetected);
-  $("split").addEventListener("change", updateSplitVisibility);
+  $("split").addEventListener("change", updateSplitState);
   $("addTrackBtn").addEventListener("click", addTrack);
   $("parseBtn").addEventListener("click", parsePasted);
   $("fetch1001Btn").addEventListener("click", fetch1001);
@@ -439,5 +504,6 @@ window.addEventListener("DOMContentLoaded", () => {
   $("url1001").addEventListener("keydown", (e) => {
     if (e.key === "Enter") fetch1001();
   });
+  updateSplitState();
   loadRecent();
 });
