@@ -79,7 +79,18 @@ button.ghost { background: transparent; }
   .cover { width: 100%; height: auto; aspect-ratio: 1 / 1; }
 }
 
-.from1001 { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.tlsource { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.tlsource-label { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+.tlsource-label .opt { opacity: 0.85; }
+
+.seg-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: #11141a; border: 1px solid var(--line); border-radius: 10px; }
+.seg-toggle .seg { background: transparent; border: 1px solid transparent; border-radius: 7px; color: var(--muted); font-size: 13px; padding: 8px 10px; }
+.seg-toggle .seg:hover { color: var(--text); border-color: transparent; }
+.seg-toggle .seg.active { background: #20242d; border-color: var(--line); color: var(--text); }
+
+.src-panel { margin-top: 14px; }
+.src-panel.hidden { display: none; }
+
 .from1001-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .from1001-label .opt { opacity: 0.85; }
 .from1001-row { display: flex; gap: 8px; }
@@ -96,8 +107,8 @@ button.ghost { background: transparent; }
 .track-row .start { text-align: center; }
 .row-btns { display: flex; gap: 2px; }
 .row-btns button { padding: 4px 8px; font-size: 12px; line-height: 1; }
-.paste { margin-top: 8px; }
-.paste summary { color: var(--muted); font-size: 13px; cursor: pointer; }
-.paste textarea { width: 100%; margin-top: 8px; padding: 10px 12px; background: #11141a; border: 1px solid var(--line); border-radius: 8px; color: var(--text); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
-.paste .hint { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
-.paste code { background: #11141a; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.paste-panel textarea { width: 100%; padding: 10px 12px; background: #11141a; border: 1px solid var(--line); border-radius: 8px; color: var(--text); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.paste-row { display: flex; gap: 8px; margin-top: 8px; }
+.paste-panel .hint { color: var(--muted); font-size: 12px; margin: 8px 0 0; min-height: 16px; }
+.paste-panel .hint.err-text { color: var(--err); }
+.paste-panel code { background: #11141a; padding: 1px 5px; border-radius: 4px; font-size: 11px; }

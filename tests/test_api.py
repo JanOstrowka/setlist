@@ -122,6 +122,24 @@ def test_parse_tracklist_empty_text(monkeypatch):
     assert resp.json()["tracks"] == []
 
 
+def test_parse_tracklist_manual_paste_shape(monkeypatch):
+    # A pasted (non-URL) tracklist is parsed manually and comes back in the SAME
+    # Tracklist shape the 1001tracklists path returns, so the editor/splitter is
+    # source-agnostic. Covers a leading index, en-dash, and an h:mm:ss cue.
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    client = TestClient(app)
+    pasted = "1. Artist One - First [0:00]\n3:24 Artist Two – Second\n1:02:33 Closing"
+    resp = client.post("/parse-tracklist", json={"text": pasted, "duration": 7200})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "manual"
+    assert [t["start"] for t in data["tracks"]] == [0.0, 204.0, 3753.0]
+    assert data["tracks"][1]["artist"] == "Artist Two"
+    assert data["tracks"][1]["title"] == "Second"
+    assert set(data.keys()) == {"source", "tracks", "album", "album_artist", "note"}
+    assert set(data["tracks"][0].keys()) >= {"start", "title", "artist"}
+
+
 def test_download_split_rejects_empty_tracks(monkeypatch):
     monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
     client = TestClient(app)

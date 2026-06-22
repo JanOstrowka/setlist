@@ -10,6 +10,12 @@ from .resolver import RawInfo
 # the same Track/Tracklist types: 1001tracklists scraping lives in tracklist_1001.py
 # (Firecrawl-fetched, since the site is Cloudflare-gated). Audio fingerprinting
 # (AudD/Panako) is still deferred and would slot in the same way.
+#
+# A user can supply a tracklist two ways today: fetch it from a 1001tracklists URL,
+# or paste raw text (a YouTube comment/description list), which parse_manual() below
+# turns into the same Track model. Auto-fetching a YouTube comment's tracklist would
+# be a natural future source — it would pull the comment text server-side and reuse
+# parse_manual()/parse_description() — but only manual paste is wired today.
 
 _LEADING_INDEX = re.compile(r"^\s*\d{1,3}[.)]\s+")
 _LEADING_TS = re.compile(r"^\s*\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*[-–—)]?\s*")
@@ -25,12 +31,23 @@ def _to_seconds(ts: str) -> float:
     return float(h * 3600 + m * 60 + s)
 
 
+# Artist/Title separators, in priority order. ASCII hyphen is tried first so the
+# existing " - " behavior is unchanged; the en-dash and em-dash are added because
+# YouTube comments and track names frequently use them (e.g. "Artist – Title").
+_LABEL_SEPARATORS = (" - ", " – ", " — ")
+
+
 def _split_label(label: str) -> tuple[str, str]:
-    """Split 'Artist - Title' into (artist, title); plain text → ('', title)."""
+    """Split 'Artist - Title' into (artist, title); plain text → ('', title).
+
+    Accepts a space-padded hyphen, en-dash, or em-dash as the separator, so a
+    pasted ``Artist – Title`` parses the same as ``Artist - Title``.
+    """
     label = label.strip(" -–—|·:\t")
-    if " - " in label:
-        left, _, right = label.partition(" - ")
-        return left.strip(), right.strip()
+    for sep in _LABEL_SEPARATORS:
+        if sep in label:
+            left, _, right = label.partition(sep)
+            return left.strip(), right.strip()
     return "", label.strip()
 
 

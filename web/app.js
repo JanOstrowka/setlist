@@ -84,7 +84,7 @@ function renderTracklist() {
     description: "from description timestamps",
     manual: "from pasted text",
     "1001tracklists": "from 1001tracklists",
-    none: "none found — add or paste below",
+    none: "none yet — fetch or paste a list above, or add rows",
   }[tl.source] || "";
   $("tlSource").textContent = sourceLabel ? `(${sourceLabel})` : "";
   const rows = $("trackRows");
@@ -162,17 +162,38 @@ function moveTrack(i, dir) {
 
 async function parsePasted() {
   const text = $("pasteBox").value;
+  const note = $("pasteNote");
   if (!text.trim()) return;
+  const btn = $("parseBtn");
+  btn.disabled = true;
+  note.className = "hint";
+  note.textContent = "Parsing…";
   try {
     const res = await fetch("/parse-tracklist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, duration: state.duration }),
     });
-    if (!res.ok) throw new Error("Parse failed");
-    setTracklist(await res.json());
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || "Parse failed");
+    }
+    const data = await res.json();
+    setTracklist(data);
+    // A pasted tracklist means the user wants to split — reveal the editor.
+    const n = (data.tracks || []).length;
+    if (n > 0) {
+      $("split").checked = true;
+      updateSplitVisibility();
+    }
+    note.textContent = n
+      ? `Parsed ${n} track${n === 1 ? "" : "s"}. Review and fill any missing times below.`
+      : "No tracks found in the pasted text.";
   } catch (err) {
-    setStatus("Error: " + err.message, true);
+    note.className = "hint err-text";
+    note.textContent = "Error: " + err.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -208,6 +229,18 @@ async function fetch1001() {
   } finally {
     btn.disabled = false;
   }
+}
+
+function setTlSource(mode) {
+  // Manual paste and the 1001tracklists URL fetch are co-equal sources that feed
+  // the same editable tracklist; this just toggles which input is shown.
+  const fetchMode = mode === "fetch";
+  $("from1001").classList.toggle("hidden", !fetchMode);
+  $("pastePanel").classList.toggle("hidden", fetchMode);
+  $("srcFetchBtn").classList.toggle("active", fetchMode);
+  $("srcFetchBtn").setAttribute("aria-checked", String(fetchMode));
+  $("srcPasteBtn").classList.toggle("active", !fetchMode);
+  $("srcPasteBtn").setAttribute("aria-checked", String(!fetchMode));
 }
 
 function updateSplitVisibility() {
@@ -398,6 +431,8 @@ window.addEventListener("DOMContentLoaded", () => {
   $("addTrackBtn").addEventListener("click", addTrack);
   $("parseBtn").addEventListener("click", parsePasted);
   $("fetch1001Btn").addEventListener("click", fetch1001);
+  $("srcFetchBtn").addEventListener("click", () => setTlSource("fetch"));
+  $("srcPasteBtn").addEventListener("click", () => setTlSource("paste"));
   $("url").addEventListener("keydown", (e) => {
     if (e.key === "Enter") resolve();
   });

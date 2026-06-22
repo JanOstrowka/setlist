@@ -36,13 +36,31 @@
         </div>
       </div>
 
-      <section id="from1001" class="from1001">
-        <label class="from1001-label" for="url1001">1001tracklists URL <span class="opt">— paste it and we fetch the tracklist + cue times for you</span></label>
-        <div class="from1001-row">
-          <input id="url1001" type="text" placeholder="https://www.1001tracklists.com/tracklist/…" autocomplete="off" />
-          <button id="fetch1001Btn" class="ghost" type="button">Fetch tracklist</button>
+      <section id="tlsource" class="tlsource">
+        <div class="tlsource-label">Tracklist for splitting <span class="opt">— pick where the track list comes from</span></div>
+        <div class="seg-toggle" role="radiogroup" aria-label="Tracklist source">
+          <button id="srcFetchBtn" class="seg active" type="button" role="radio" aria-checked="true">Fetch from 1001tracklists</button>
+          <button id="srcPasteBtn" class="seg" type="button" role="radio" aria-checked="false">Paste tracklist</button>
         </div>
-        <p id="tl1001Note" class="hint"></p>
+
+        <section id="from1001" class="from1001 src-panel">
+          <label class="from1001-label" for="url1001">1001tracklists URL <span class="opt">— paste it and we fetch the tracklist + cue times for you</span></label>
+          <div class="from1001-row">
+            <input id="url1001" type="text" placeholder="https://www.1001tracklists.com/tracklist/…" autocomplete="off" />
+            <button id="fetch1001Btn" class="ghost" type="button">Fetch tracklist</button>
+          </div>
+          <p id="tl1001Note" class="hint"></p>
+        </section>
+
+        <section id="pastePanel" class="paste-panel src-panel hidden">
+          <label class="from1001-label" for="pasteBox">Paste tracklist <span class="opt">— from a YouTube comment, the video description, or anywhere</span></label>
+          <textarea id="pasteBox" rows="6" placeholder="1. Artist - Title [12:34]&#10;0:00 Artist - Title&#10;1:02:33 Artist – Title"></textarea>
+          <div class="paste-row">
+            <button id="parseBtn" class="ghost" type="button">Parse pasted tracklist</button>
+          </div>
+          <p class="hint">Recognizes <code>0:00 Artist - Title</code>, <code>N. Artist – Title [time]</code>, and <code>time Title</code> (en-dash ok). Lines without a time are still added — fill it in below.</p>
+          <p id="pasteNote" class="hint"></p>
+        </section>
       </section>
 
       <section id="tracklist" class="tracklist hidden">
@@ -51,12 +69,6 @@
           <button id="addTrackBtn" class="ghost" type="button">+ Add track</button>
         </div>
         <div id="trackRows" class="track-rows"></div>
-        <details class="paste">
-          <summary>Or paste a tracklist by hand</summary>
-          <textarea id="pasteBox" rows="5" placeholder="1. Artist - Title [12:34]&#10;Artist - Title&#10;1:02:33 Title"></textarea>
-          <button id="parseBtn" class="ghost" type="button">Parse pasted tracklist</button>
-          <p class="hint">Recognizes <code>N. Artist - Title [time]</code>, <code>Artist - Title</code>, and <code>time Title</code>. Missing times can be filled in above.</p>
-        </details>
       </section>
 
       <p id="detected" class="detected"></p>

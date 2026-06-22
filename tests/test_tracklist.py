@@ -54,6 +54,34 @@ def test_parse_manual_three_formats():
     assert tracks[2].start == 120.0 and tracks[2].title == "Third Title"
 
 
+def test_parse_manual_en_dash_em_dash_and_hhmmss():
+    # Pasted YouTube-comment lines often use en-/em-dashes and h:mm:ss cues.
+    text = "0:00 Artist One – First\n[3:24] Artist Two — Second\n1:02:33 Closing Title"
+    tracks = parse_manual(text)
+    assert [t.start for t in tracks] == [0.0, 204.0, 3753.0]
+    assert tracks[0].artist == "Artist One" and tracks[0].title == "First"
+    assert tracks[1].artist == "Artist Two" and tracks[1].title == "Second"
+    assert tracks[2].artist == "" and tracks[2].title == "Closing Title"
+
+
+def test_parse_manual_ignores_garbage_without_error():
+    # Separator-only / blank lines carry no track and are dropped; the timestamped
+    # lines (incl. an en-dash split and an h:mm:ss cue) still parse cleanly.
+    text = (
+        "0:00 Artist One - First\n"
+        "··········\n"
+        "\n"
+        "-----\n"
+        "3:24 Artist Two – Second\n"
+        "   |   \n"
+        "1:02:33 Closing\n"
+    )
+    tracks = parse_manual(text)
+    assert [t.start for t in tracks] == [0.0, 204.0, 3753.0]
+    assert [t.title for t in tracks] == ["First", "Second", "Closing"]
+    assert tracks[1].artist == "Artist Two"
+
+
 def test_normalize_sorts_and_dedups():
     tracks = [Track(start=120, title="B"), Track(start=0, title="A"), Track(start=120, title="B dup")]
     out = normalize(tracks, 3600)
