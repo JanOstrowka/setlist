@@ -184,6 +184,71 @@ def test_parse_tracklist_detects_1001_url(monkeypatch):
     assert data["album_artist"] == "John Summit"
 
 
+def test_auto_tracklist_without_key_degrades_quietly(monkeypatch):
+    # No Firecrawl key -> 200 with an empty "none" tracklist (never a blocking error).
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    monkeypatch.setattr(
+        main_module, "cfg",
+        dataclasses.replace(main_module.cfg, firecrawl_api_key=None),
+    )
+    client = TestClient(app)
+    resp = client.post("/auto-tracklist", json={"query": "John Summit Coachella 2026"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "none"
+    assert data["tracks"] == []
+
+
+def test_auto_tracklist_empty_query_returns_none(monkeypatch):
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    client = TestClient(app)
+    resp = client.post("/auto-tracklist", json={"query": "", "url": ""})
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "none"
+
+
+def test_auto_tracklist_finds_and_parses_tracklist(monkeypatch):
+    # Stub the search (discovery) and the page fetch with the committed fixture so
+    # the full auto-fetch path is exercised without touching the network.
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    md = _FIXTURE.read_text(encoding="utf-8")
+    monkeypatch.setattr(
+        tracklist_1001, "search_1001tracklists_url",
+        lambda query, api_key, timeout=60.0: _1001_URL,
+    )
+    monkeypatch.setattr(
+        tracklist_1001, "fetch_1001tracklists_markdown",
+        lambda url, api_key, timeout=120.0: md,
+    )
+    monkeypatch.setattr(
+        main_module, "cfg",
+        dataclasses.replace(main_module.cfg, firecrawl_api_key="fc-test"),
+    )
+    client = TestClient(app)
+    resp = client.post("/auto-tracklist", json={"query": "John Summit Coachella 2026"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source"] == "1001tracklists"
+    assert len(data["tracks"]) == 24
+    assert data["album_artist"] == "John Summit"
+
+
+def test_auto_tracklist_no_search_match_degrades(monkeypatch):
+    monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
+    monkeypatch.setattr(
+        tracklist_1001, "search_1001tracklists_url",
+        lambda query, api_key, timeout=60.0: None,
+    )
+    monkeypatch.setattr(
+        main_module, "cfg",
+        dataclasses.replace(main_module.cfg, firecrawl_api_key="fc-test"),
+    )
+    client = TestClient(app)
+    resp = client.post("/auto-tracklist", json={"query": "obscure set"})
+    assert resp.status_code == 200
+    assert resp.json()["source"] == "none"
+
+
 def test_parse_tracklist_1001_without_key_returns_400(monkeypatch):
     monkeypatch.setenv("YT_DLP_SELF_UPDATE", "0")
     monkeypatch.setattr(

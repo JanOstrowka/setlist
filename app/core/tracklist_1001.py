@@ -31,6 +31,7 @@ from ..config import Config
 from ..models import Track, Tracklist
 
 _FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v2/scrape"
+_FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search"
 
 # A standalone cue line: "1:31", "03:10", or "1:02:13" (optionally bracketed/parens).
 _CUE_LINE = re.compile(r"^[\[(]?(\d{1,2}:\d{2}(?::\d{2})?)[)\]]?$")
@@ -209,3 +210,90 @@ def parse_1001tracklists(url: str, cfg: Config) -> Tracklist:
         album_artist=parsed.album_artist,
         note=parsed.note,
     )
+
+
+# --- auto-discovery from a YouTube set --------------------------------------
+#
+# 1001tracklists has no public API and is Cloudflare-gated, so there is no stable
+# URL to look up the tracklist for a YouTube video id directly. The robust path
+# the community uses is a web search ("<set title> site:1001tracklists.com"); we
+# run that through Firecrawl's search endpoint, pick the first real /tracklist/
+# page, and reuse the existing fetch+parse path above. Everything here is
+# best-effort: any miss or failure degrades to an empty Tracklist so auto-fetch
+# never blocks the user (they can still paste a URL/text manually).
+
+
+def _normalize_search_results(payload: object) -> list[dict]:
+    """Flatten a Firecrawl search response into a list of ``{"url", "title", ...}``.
+
+    Firecrawl v2 returns ``{"data": {"web": [...]}}``; older/alt shapes use a bare
+    ``{"data": [...]}``. Anything else yields an empty list.
+    """
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, dict):
+        web = data.get("web")
+        return [r for r in web if isinstance(r, dict)] if isinstance(web, list) else []
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
+    return []
+
+
+def _pick_1001_tracklist_url(results: list[dict]) -> Optional[str]:
+    """Return the first result that is an actual 1001tracklists ``/tracklist/`` page.
+
+    DJ index pages, source pages, and the like are skipped so we only ever hand a
+    real tracklist URL to the parser.
+    """
+    for item in results or []:
+        url = (item.get("url") or "").strip()
+        if is_1001_url(url) and "/tracklist/" in urlparse(url).path:
+            return url
+    return None
+
+
+def search_1001tracklists_url(
+    query: str, api_key: str, timeout: float = 60.0
+) -> Optional[str]:
+    """Find the 1001tracklists tracklist URL for a set via a Firecrawl web search."""
+    q = (query or "").strip()
+    if not q:
+        return None
+    resp = httpx.post(
+        _FIRECRAWL_SEARCH_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={"query": f"{q} site:1001tracklists.com", "limit": 5},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    return _pick_1001_tracklist_url(_normalize_search_results(resp.json()))
+
+
+def find_tracklist_for_youtube(query: str, cfg: Config) -> Tracklist:
+    """Best-effort auto-fetch: search 1001tracklists for ``query`` (the set title)
+    and parse the matching tracklist.
+
+    Always returns a ``Tracklist`` and never raises: a missing key, no match, or a
+    fetch/parse failure all degrade to ``source='none'`` with a short note, so the
+    UI can fall back to manual entry quietly.
+    """
+    if not cfg.firecrawl_api_key:
+        return Tracklist(
+            source="none",
+            note="Set a FIRECRAWL_API_KEY to auto-fetch tracklists from 1001tracklists.",
+        )
+    try:
+        url = search_1001tracklists_url(query, cfg.firecrawl_api_key)
+    except Exception:
+        url = None
+    if not url:
+        return Tracklist(source="none", note="No matching 1001tracklists page found.")
+    try:
+        return parse_1001tracklists(url, cfg)
+    except Exception:
+        return Tracklist(
+            source="none",
+            note="Found a 1001tracklists page but could not read it — paste a list instead.",
+        )

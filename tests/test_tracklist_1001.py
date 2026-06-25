@@ -3,6 +3,8 @@ from pathlib import Path
 from app.core.tracklist_1001 import (
     Parsed1001,
     _cue_to_seconds,
+    _normalize_search_results,
+    _pick_1001_tracklist_url,
     _split_artist_title,
     is_1001_url,
     parse_1001tracklists_markdown,
@@ -158,6 +160,41 @@ Views
 
 [search the web via Google](https://www.google.com/search?q=DJ+X "search the web via Google")
 """
+
+
+# --- auto-discovery search-result handling ----------------------------------
+
+def test_normalize_search_results_v2_web_shape():
+    payload = {"data": {"web": [{"url": "https://a"}, {"url": "https://b"}, "junk"]}}
+    assert _normalize_search_results(payload) == [{"url": "https://a"}, {"url": "https://b"}]
+
+
+def test_normalize_search_results_bare_list_shape():
+    payload = {"data": [{"url": "https://a"}]}
+    assert _normalize_search_results(payload) == [{"url": "https://a"}]
+
+
+def test_normalize_search_results_handles_garbage():
+    assert _normalize_search_results({}) == []
+    assert _normalize_search_results("nope") == []
+
+
+def test_pick_1001_tracklist_url_skips_non_tracklist_pages():
+    results = [
+        {"url": "https://www.youtube.com/watch?v=abc"},
+        {"url": "https://www.1001tracklists.com/dj/johnsummit/index.html"},
+        {"url": "https://www.1001tracklists.com/tracklist/2wtl1821/x.html"},
+        {"url": "https://www.1001tracklists.com/tracklist/zzz/y.html"},
+    ]
+    assert (
+        _pick_1001_tracklist_url(results)
+        == "https://www.1001tracklists.com/tracklist/2wtl1821/x.html"
+    )
+
+
+def test_pick_1001_tracklist_url_none_when_no_match():
+    assert _pick_1001_tracklist_url([{"url": "https://example.com"}]) is None
+    assert _pick_1001_tracklist_url([]) is None
 
 
 def test_synthetic_handles_id_id_w_slash_and_hhmmss():

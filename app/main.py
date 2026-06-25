@@ -133,6 +133,7 @@ class JobManager:
                 "title": req.metadata.title,
                 "artist": req.metadata.artist,
                 "album": req.metadata.album,
+                "video_id": req.video_id,  # lets the UI show a YouTube thumbnail
             })
             self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message="Saved", file_path=str(dest)))
 
@@ -197,6 +198,7 @@ class JobManager:
                 "title": req.metadata.album or req.metadata.title,
                 "artist": req.metadata.album_artist or req.metadata.artist,
                 "album": req.metadata.album,
+                "video_id": req.video_id,  # lets the UI show a YouTube thumbnail
             })
             self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message=f"Saved {total} tracks", file_path=str(set_dir)))
 
@@ -229,6 +231,13 @@ class RevealRequest(BaseModel):
 
 class ParseTracklistRequest(BaseModel):
     text: str
+    duration: int = 0
+
+
+class AutoTracklistRequest(BaseModel):
+    # `query` is normally the resolved video title; `url` is a fallback search term.
+    query: str = ""
+    url: str = ""
     duration: int = 0
 
 
@@ -295,6 +304,20 @@ def parse_tracklist_endpoint(req: ParseTracklistRequest) -> Tracklist:
                 detail=f"Could not fetch 1001tracklists: {resolver.augment_error(exc)}",
             )
     return tracklist.parse_manual_tracklist(req.text, req.duration or None)
+
+
+@app.post("/auto-tracklist", response_model=Tracklist)
+def auto_tracklist_endpoint(req: AutoTracklistRequest) -> Tracklist:
+    """Best-effort auto-fetch of a 1001tracklists tracklist for a resolved set.
+
+    Always returns 200 with a ``Tracklist`` (``source='none'`` when nothing is
+    found or no Firecrawl key is configured) so the UI degrades quietly to manual
+    entry instead of surfacing a blocking error.
+    """
+    query = (req.query or req.url or "").strip()
+    if not query:
+        return Tracklist(source="none", note="Nothing to search for yet.")
+    return tracklist_1001.find_tracklist_for_youtube(query, cfg)
 
 
 @app.post("/download-split")
