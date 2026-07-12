@@ -43,8 +43,14 @@ def download_audio(
         "progress_hooks": [hook],
     }
     if pot_provider_url:
-        # Requires the bgutil PO-token provider plugin to be installed.
-        opts["extractor_args"] = {"youtube": {"getpot_bgutil_baseurl": [pot_provider_url]}}
+        # Requires the bgutil PO-token provider plugin. Plugin >=1.0 (yt-dlp's
+        # 2025 PO Token Provider framework) reads youtubepot-bgutilhttp:base_url;
+        # the legacy youtube:getpot_bgutil_baseurl key keeps pre-1.0 plugins
+        # working. Unknown extractor args are ignored, so passing both is safe.
+        opts["extractor_args"] = {
+            "youtubepot-bgutilhttp": {"base_url": [pot_provider_url]},
+            "youtube": {"getpot_bgutil_baseurl": [pot_provider_url]},
+        }
     if cookiefile:
         opts["cookiefile"] = str(cookiefile)
 
