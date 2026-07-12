@@ -1,0 +1,60 @@
+/* Styles specific to the hosted site (helper status, setup panel, settings).
+   styles.css is the file shared verbatim with the local UI. */
+
+/* ---- header row with status + settings ---- */
+.brand-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+body.state-landing .brand-row { flex-direction: column; gap: 10px; }
+.brand-tools { display: flex; align-items: center; gap: 8px; }
+
+.status-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px; border-radius: 999px; font-size: 12px;
+  background: var(--field); border: 1px solid var(--line); color: var(--muted);
+}
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.status-pill.status-ok { color: var(--ok); border-color: rgba(61, 220, 132, 0.35); }
+.status-pill.status-ok .status-dot { background: var(--ok); }
+.status-pill.status-bad { color: var(--err); border-color: rgba(255, 107, 107, 0.35); }
+.status-pill.status-bad .status-dot { background: var(--err); }
+.gear { padding: 6px 10px; font-size: 14px; border-radius: 999px; }
+
+/* ---- setup panel (helper missing) ---- */
+.setup {
+  background: var(--card); border: 1px solid rgba(255, 107, 107, 0.35);
+  border-radius: 14px; padding: 18px 20px; margin: 0 0 24px;
+  font-size: 14px;
+}
+.setup h2 { font-size: 15px; margin: 0 0 8px; color: var(--err); }
+.setup p { margin: 6px 0; color: var(--text); }
+.setup ol { margin: 10px 0; padding-left: 22px; }
+.setup li { margin: 4px 0; }
+.setup code {
+  background: var(--field); border: 1px solid var(--line);
+  padding: 2px 6px; border-radius: 5px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.linklike {
+  background: none; border: none; padding: 0; color: var(--accent);
+  text-decoration: underline; cursor: pointer; font-size: inherit;
+}
+.setup a { color: var(--accent); }
+
+/* ---- orchestration note under the progress bar ---- */
+.orchestration { margin-top: 4px; }
+.orchestration a { color: var(--muted); text-decoration: underline; }
+.orchestration a:hover { color: var(--text); }
+
+/* ---- settings dialog ---- */
+.settings {
+  background: var(--card); color: var(--text);
+  border: 1px solid var(--line); border-radius: 14px;
+  padding: 22px; width: min(440px, 92vw);
+}
+.settings::backdrop { background: rgba(0, 0, 0, 0.55); }
+.settings h2 { font-size: 16px; margin: 0 0 14px; }
+.settings h3 { font-size: 13px; margin: 18px 0 4px; }
+.settings h3 .opt, .settings label .opt { color: var(--muted); font-weight: 400; font-size: 12px; }
+.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); margin-top: 10px; }
+.settings .hint { margin: 6px 0 0; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.primary-inline { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }

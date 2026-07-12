@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Setlist</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./site.css" />
+</head>
+<body class="state-landing">
+  <main class="container">
+    <header class="brand">
+      <div class="brand-row">
+        <h1 id="brand">Setlist</h1>
+        <div class="brand-tools">
+          <button id="helperStatus" class="status-pill status-unknown" type="button"
+                  title="Local helper connection — click for setup &amp; settings">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="helperStatusText">Checking helper…</span>
+          </button>
+          <button id="settingsBtn" class="ghost gear" type="button" title="Settings" aria-label="Settings">⚙</button>
+        </div>
+      </div>
+      <p class="sub">Paste a YouTube link — we scrape the metadata, fetch the tracklist, and save a tagged ALAC set to your Mac's Music folder.</p>
+    </header>
+
+    <!-- Shown when the local helper can't be reached -->
+    <section id="setupPanel" class="setup hidden" aria-live="polite">
+      <h2>Local helper not detected</h2>
+      <p>Setlist works with a small helper app running on your Mac — it does the
+         downloading and saves files to <code>~/Music</code>. This page couldn't reach it at
+         <code id="setupHelperUrl">http://127.0.0.1:8765</code>.</p>
+      <ol>
+        <li><code>git clone https://github.com/JanOstrowka/setlist &amp;&amp; cd setlist</code></li>
+        <li><code>cp .env.example .env</code> — then add your API keys</li>
+        <li><code>./helper/install.sh</code> to run it at login (or <code>./run.sh</code> for one session)</li>
+      </ol>
+      <p id="safariHint" class="hint err-text hidden">You appear to be using Safari, which blocks
+         pages like this one from talking to <code>127.0.0.1</code>. Use Chrome, Edge, or Brave —
+         or open the local UI directly at <a href="http://127.0.0.1:8765">http://127.0.0.1:8765</a>.</p>
+      <p class="hint">Already running? Check the port matches in <button id="setupSettingsBtn" class="linklike" type="button">settings</button>. Retrying automatically…</p>
+    </section>
+
+    <!-- Hero: the focal paste box. Large + centered when landing, slim bar once
+         a URL resolves. One #url input drives both states. -->
+    <section class="hero" aria-label="Resolve a YouTube link">
+      <div class="hero-box">
+        <span class="hero-icon" aria-hidden="true">▶</span>
+        <input id="url" type="text" class="url-input"
+               placeholder="Paste a YouTube URL…" autocomplete="off"
+               aria-label="YouTube URL" spellcheck="false" />
+        <button id="resolveBtn" class="hero-go" type="button">Resolve</button>
+        <button id="resetBtn" class="hero-reset hidden" type="button" title="Start over">Start over</button>
+      </div>
+      <p id="resolveState" class="resolve-state" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- Landing-only: recent saves with thumbnails -->
+    <section id="recentSection" class="recent" aria-label="Recent saves">
+      <h2>Recent</h2>
+      <ul id="recent" class="recent-grid"></ul>
+    </section>
+
+    <!-- Resolved-only: two-pane workspace (left = set info, right = player + tracklist) -->
+    <section id="workspace" class="workspace hidden">
+      <!-- LEFT: editable set info + primary actions -->
+      <div class="pane pane-info">
+        <div class="info-head">
+          <img id="cover" class="cover" alt="Cover art preview" />
+          <div class="info-head-text">
+            <h2 class="pane-title">Set info</h2>
+            <p class="pane-hint">Review and edit before saving.</p>
+          </div>
+        </div>
+
+        <div class="fields">
+          <label>Title <input id="title" type="text" /></label>
+          <label>Artist <input id="artist" type="text" /></label>
+          <label>Album <input id="album" type="text" /></label>
+          <label>Album Artist <input id="albumArtist" type="text" /></label>
+          <div class="two">
+            <label>Year <input id="year" type="number" inputmode="numeric" /></label>
+            <label>Genre <input id="genre" type="text" /></label>
+          </div>
+          <label class="check"><input id="compilation" type="checkbox" /> Compilation (various artists)</label>
+        </div>
+
+        <fieldset class="opts">
+          <legend>Output</legend>
+          <label class="check"><input id="aac256" type="checkbox" /> AAC 256 kbps (smaller files)</label>
+          <label class="check"><input id="split" type="checkbox" /> Split into separate tracks</label>
+        </fieldset>
+
+        <p id="detected" class="detected"></p>
+        <button id="downloadBtn" class="primary">Download &amp; tag</button>
+        <p id="downloadError" class="cta-error" role="alert" aria-live="assertive"></p>
+
+        <section id="progress" class="progress hidden" aria-live="polite">
+          <div class="bar-track"><div id="bar" class="bar"></div></div>
+          <p id="progressMsg"></p>
+          <p id="orchestration" class="hint orchestration"></p>
+          <button id="revealDone" class="ghost" style="display:none">Reveal in Finder</button>
+        </section>
+      </div>
+
+      <!-- RIGHT: embedded player + tracklist -->
+      <div class="pane pane-player">
+        <div class="player-wrap">
+          <div id="ytPlayer" class="yt-player"></div>
+        </div>
+
+        <section id="tlsource" class="tlsource">
+          <div class="tlsource-label">Tracklist source <span class="opt">— auto-fetched from 1001tracklists; switch to paste your own</span></div>
+          <div class="seg-toggle" role="radiogroup" aria-label="Tracklist source">
+            <button id="srcFetchBtn" class="seg active" type="button" role="radio" aria-checked="true">1001tracklists</button>
+            <button id="srcPasteBtn" class="seg" type="button" role="radio" aria-checked="false">Paste tracklist</button>
+          </div>
+
+          <section id="from1001" class="from1001 src-panel">
+            <label class="from1001-label" for="url1001">1001tracklists URL <span class="opt">— filled automatically when we find a match; paste one to override</span></label>
+            <div class="from1001-row">
+              <input id="url1001" type="text" placeholder="https://www.1001tracklists.com/tracklist/…" autocomplete="off" />
+              <button id="fetch1001Btn" class="ghost" type="button">Fetch</button>
+            </div>
+            <p id="tl1001Note" class="hint" aria-live="polite"></p>
+          </section>
+
+          <section id="pastePanel" class="paste-panel src-panel hidden">
+            <label class="from1001-label" for="pasteBox">Paste tracklist <span class="opt">— from a YouTube comment, the description, or anywhere</span></label>
+            <textarea id="pasteBox" rows="6" placeholder="1. Artist - Title [12:34]&#10;0:00 Artist - Title&#10;1:02:33 Artist – Title"></textarea>
+            <div class="paste-row">
+              <button id="parseBtn" class="ghost" type="button">Parse pasted tracklist</button>
+            </div>
+            <p class="hint">Recognizes <code>0:00 Artist - Title</code>, <code>N. Artist – Title [time]</code>, and <code>time Title</code> (en-dash ok). Lines without a time are kept but skipped when splitting.</p>
+            <p id="pasteNote" class="hint" aria-live="polite"></p>
+          </section>
+        </section>
+
+        <section id="tracklist" class="tracklist">
+          <div class="tl-head">
+            <h3>Tracklist <span id="tlSource" class="tl-source"></span></h3>
+            <button id="addTrackBtn" class="ghost" type="button">+ Add track</button>
+          </div>
+          <p class="tl-tip">Click a track's time to jump the player there. Tracks without a time are skipped when splitting.</p>
+          <div id="trackRows" class="track-rows"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <!-- Settings: helper URL + optional n8n orchestration. Stored in localStorage
+       only — this static site ships no personal values or secrets. -->
+  <dialog id="settingsDialog" class="settings">
+    <form method="dialog">
+      <h2>Settings</h2>
+      <label>Helper URL
+        <input id="setHelperUrl" type="text" placeholder="http://127.0.0.1:8765" spellcheck="false" />
+      </label>
+      <p class="hint">The local Setlist app on this Mac. Leave as the default unless you changed <code>PORT</code>.</p>
+      <h3>n8n orchestration <span class="opt">(optional)</span></h3>
+      <p class="hint">When both fields are set, Download jobs are sent through your n8n
+         workflow (audit trail in n8n) instead of straight to the helper. Stored only in
+         this browser's localStorage.</p>
+      <label>n8n webhook URL
+        <input id="setN8nUrl" type="text" placeholder="https://your-instance.app.n8n.cloud/webhook/setlist-submit" spellcheck="false" />
+      </label>
+      <label>n8n webhook token <span class="opt">(sent as X-N8N-Auth)</span>
+        <input id="setN8nToken" type="password" placeholder="paste N8N_WEBHOOK_TOKEN" spellcheck="false" />
+      </label>
+      <div class="settings-actions">
+        <button value="cancel" class="ghost" type="submit">Cancel</button>
+        <button id="settingsSave" value="save" class="primary-inline" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="./site.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
