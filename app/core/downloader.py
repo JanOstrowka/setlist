@@ -12,11 +12,14 @@ def download_audio(
     workdir: Path,
     on_progress: Callable[[float], None],
     pot_provider_url: Optional[str] = None,
+    cookiefile: Optional[Path | str] = None,
 ) -> Path:
     """Download the best audio-only stream into workdir. Returns the source file path.
 
     on_progress receives a 0-100 float. No postprocessing: we encode separately so
     the file stays untagged until mutagen writes the user-confirmed atoms.
+    cookiefile (Netscape cookies.txt) lets cloud workers pass a signed-in YouTube
+    session when datacenter IPs hit bot checks.
     """
     state: dict[str, Optional[str]] = {"path": None}
 
@@ -42,6 +45,8 @@ def download_audio(
     if pot_provider_url:
         # Requires the bgutil PO-token provider plugin to be installed.
         opts["extractor_args"] = {"youtube": {"getpot_bgutil_baseurl": [pot_provider_url]}}
+    if cookiefile:
+        opts["cookiefile"] = str(cookiefile)
 
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
@@ -54,14 +59,25 @@ def download_audio(
     return Path(path)
 
 
-def encode(src: Path | str, dest: Path | str, fmt: str) -> None:
-    """Transcode src to dest. fmt is 'alac' (lossless) or 'aac256'."""
+def encode(
+    src: Path | str,
+    dest: Path | str,
+    fmt: str,
+    limit_seconds: Optional[float] = None,
+) -> None:
+    """Transcode src to dest. fmt is 'alac' (lossless) or 'aac256'.
+
+    limit_seconds caps the output duration (ffmpeg -t); used by the Modal spike
+    to prove the pipeline without paying for a full-set encode.
+    """
     if fmt == "aac256":
         codec_args = ["-c:a", "aac", "-b:a", "256k"]
     else:
         codec_args = ["-c:a", "alac"]
+    duration_args = ["-t", str(limit_seconds)] if limit_seconds else []
     cmd = [
         "ffmpeg", "-y", "-i", str(src),
+        *duration_args,
         "-vn", *codec_args, "-movflags", "+faststart",
         str(dest),
     ]

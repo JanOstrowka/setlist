@@ -59,13 +59,17 @@ def _formats_summary(fmt: dict | None) -> str:
     return f"bestaudio {fmt.get('format_id', '?')} ({ext})"
 
 
-def resolve(url: str) -> RawInfo:
-    opts = {
+def resolve(url: str, cookiefile: str | Path | None = None) -> RawInfo:
+    opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": True,
     }
+    if cookiefile:
+        # Bot checks can fire at metadata extraction too, so cloud workers
+        # need to pass the session cookies here as well as at download time.
+        opts["cookiefile"] = str(cookiefile)
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     formats = info.get("formats") or []
