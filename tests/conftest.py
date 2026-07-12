@@ -1,3 +1,4 @@
+import dataclasses
 import shutil
 import subprocess
 from io import BytesIO
@@ -9,6 +10,22 @@ from PIL import Image
 
 def has_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
+
+
+@pytest.fixture(autouse=True)
+def _no_api_auth(monkeypatch):
+    """Keep the API open during tests regardless of the developer's real .env.
+
+    app.main loads .env at import time, so a real API_AUTH_TOKEN there would
+    401 every TestClient call. Auth tests opt back in by replacing cfg with a
+    token of their own inside the test body (which runs after this fixture).
+    """
+    from app import main as main_module
+
+    monkeypatch.setattr(
+        main_module, "cfg",
+        dataclasses.replace(main_module.cfg, api_auth_token=None),
+    )
 
 
 @pytest.fixture

@@ -33,6 +33,7 @@ class Config:
     default_format: str
     port: int
     pot_provider_url: str | None
+    api_auth_token: str | None
 
 
 def load_config() -> Config:
@@ -44,4 +45,5 @@ def load_config() -> Config:
         default_format=os.getenv("DEFAULT_FORMAT", "alac"),
         port=int(os.getenv("PORT", "8765")),
         pot_provider_url=os.getenv("POT_PROVIDER_URL") or None,
+        api_auth_token=os.getenv("API_AUTH_TOKEN") or None,
     )

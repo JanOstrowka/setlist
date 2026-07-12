@@ -3,16 +3,19 @@ from __future__ import annotations
 import asyncio
 import os
 import queue
+import secrets
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+import httpx
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -40,6 +43,10 @@ init_env()
 cfg = load_config()
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+# Completion-callback delivery policy (see JobManager._post_callback).
+CALLBACK_ATTEMPTS = 3
+CALLBACK_RETRY_DELAY = 2.0  # seconds between attempts; tests patch this to 0
 
 
 def render_index() -> str:
@@ -82,13 +89,43 @@ class JobManager:
             job_id, req = self.work.get()
             try:
                 if isinstance(req, SplitDownloadRequest):
-                    self._process_split(job_id, req)
+                    paths = self._process_split(job_id, req)
                 else:
-                    self._process(job_id, req)
+                    paths = self._process(job_id, req)
             except Exception as exc:  # surface any pipeline failure to the UI
-                self._emit(job_id, ProgressEvent(stage="error", pct=0.0, message=resolver.augment_error(exc)))
+                message = resolver.augment_error(exc)
+                self._emit(job_id, ProgressEvent(stage="error", pct=0.0, message=message))
+                self._post_callback(req, {
+                    "job_id": job_id, "status": "error", "output_paths": [], "error": message,
+                })
+            else:
+                self._post_callback(req, {
+                    "job_id": job_id, "status": "done", "output_paths": paths, "error": "",
+                })
 
-    def _process(self, job_id: str, req: DownloadRequest) -> None:
+    def _post_callback(self, req: "DownloadRequest | SplitDownloadRequest", payload: dict) -> None:
+        """Best-effort POST of a terminal-state summary to the request's callback_url.
+
+        Lets remote orchestrators (e.g. an n8n Wait-node resume URL) learn that a
+        job finished without holding an SSE connection open. Never raises: a dead
+        or slow callback target must not crash the worker or fail the job. Retries
+        cover the small race where the caller's resume webhook is not registered
+        yet when a job finishes quickly.
+        """
+        url = (req.callback_url or "").strip()
+        if not url:
+            return
+        for attempt in range(CALLBACK_ATTEMPTS):
+            try:
+                resp = httpx.post(url, json=payload, timeout=10.0)
+                if resp.is_success:
+                    return
+            except Exception:
+                pass
+            if attempt < CALLBACK_ATTEMPTS - 1:
+                time.sleep(CALLBACK_RETRY_DELAY)
+
+    def _process(self, job_id: str, req: DownloadRequest) -> list[str]:
         with tempfile.TemporaryDirectory(prefix="setlist-") as tmp:
             tmpdir = Path(tmp)
 
@@ -136,8 +173,9 @@ class JobManager:
                 "video_id": req.video_id,  # lets the UI show a YouTube thumbnail
             })
             self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message="Saved", file_path=str(dest)))
+            return [str(dest)]
 
-    def _process_split(self, job_id: str, req: SplitDownloadRequest) -> None:
+    def _process_split(self, job_id: str, req: SplitDownloadRequest) -> list[str]:
         with tempfile.TemporaryDirectory(prefix="setlist-") as tmp:
             tmpdir = Path(tmp)
 
@@ -201,6 +239,7 @@ class JobManager:
                 "video_id": req.video_id,  # lets the UI show a YouTube thumbnail
             })
             self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message=f"Saved {total} tracks", file_path=str(set_dir)))
+            return [str(set_dir / f.name) for f in files]
 
 
 def _self_update_yt_dlp() -> None:
@@ -223,6 +262,51 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
 jobs = JobManager(cfg)
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+# Paths that stay public even when API auth is enabled: the UI shell and its
+# assets carry no secrets, and the browser can't attach an Authorization header
+# to plain page/asset loads anyway.
+PUBLIC_PATHS = {"/", "/favicon.ico"}
+
+
+def _is_direct_local_request(request: Request) -> bool:
+    """True for requests from this Mac's own browser hitting 127.0.0.1 directly.
+
+    Tunnels (Tailscale serve/funnel, cloudflared, ngrok) proxy to loopback but
+    always add an X-Forwarded-For header, so remote traffic can't look local:
+    loopback + no forwarding header can only originate on this machine. This
+    keeps the local web UI working without a token while the tunnel side of the
+    same server requires one.
+    """
+    client = request.client
+    return (
+        client is not None
+        and client.host in ("127.0.0.1", "::1")
+        and "x-forwarded-for" not in request.headers
+    )
+
+
+@app.middleware("http")
+async def require_bearer_token(request: Request, call_next):
+    """Require `Authorization: Bearer <API_AUTH_TOKEN>` when the token is configured.
+
+    With API_AUTH_TOKEN unset the app behaves exactly as before (open,
+    loopback-only). With it set, every API route demands the token except the
+    UI paths above and direct local requests (see _is_direct_local_request).
+    """
+    token = cfg.api_auth_token
+    if token:
+        path = request.url.path
+        exempt = path in PUBLIC_PATHS or path.startswith("/static/") or _is_direct_local_request(request)
+        if not exempt:
+            supplied = request.headers.get("authorization", "")
+            if not secrets.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Missing or invalid bearer token"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+    return await call_next(request)
 
 
 class RevealRequest(BaseModel):

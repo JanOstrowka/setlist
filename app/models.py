@@ -52,6 +52,7 @@ class DownloadRequest(BaseModel):
     metadata: MetadataFields
     format: Literal["alac", "aac256"] = "alac"
     cover: str = "keep"  # "keep" reuses the server-cached cover, or a data URI overrides it
+    callback_url: str = ""  # optional: POSTed a completion summary when the job ends
 
 
 class SplitDownloadRequest(BaseModel):
@@ -61,6 +62,7 @@ class SplitDownloadRequest(BaseModel):
     tracks: list[Track]
     format: Literal["alac", "aac256"] = "alac"
     cover: str = "keep"
+    callback_url: str = ""  # optional: POSTed a completion summary when the job ends
 
 
 class ProgressEvent(BaseModel):
