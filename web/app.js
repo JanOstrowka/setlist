@@ -1,4 +1,37 @@
 const $ = (id) => document.getElementById(id);
+
+// ---- deployment seams --------------------------------------------------------
+// This file is shared verbatim between the local UI (served by FastAPI at "/")
+// and the hosted site (site/, deployed statically). The hosted site sets these
+// globals in site.js before this script runs; locally they stay undefined and
+// everything behaves exactly as before (same-origin relative URLs).
+//
+//   window.SETLIST_API_BASE   — helper base URL, e.g. "http://127.0.0.1:8765".
+//                               Read lazily so settings changes apply live.
+//   window.SETLIST_SUBMIT_JOB — async ({ endpoint, body }) => { job_id }.
+//                               Lets the site route the approved job through
+//                               n8n instead of POSTing the helper directly.
+function apiBase() {
+  return window.SETLIST_API_BASE || "";
+}
+
+async function defaultSubmitJob({ endpoint, body }) {
+  const res = await fetch(apiBase() + endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Download request failed");
+  }
+  return res.json();
+}
+
+function submitJob(job) {
+  const submit = window.SETLIST_SUBMIT_JOB || defaultSubmitJob;
+  return submit(job);
+}
 const state = {
   videoId: "",
   url: "",
@@ -110,7 +143,7 @@ async function resolve(opts = {}) {
   setResolveState(opts.auto ? "Resolving link…" : "Resolving…", { spin: true });
   $("resolveBtn").disabled = true;
   try {
-    const res = await fetch("/resolve", {
+    const res = await fetch(apiBase() + "/resolve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
@@ -348,7 +381,7 @@ async function autoFetchTracklist() {
   note.className = "hint";
   note.textContent = "Looking for a matching tracklist on 1001tracklists…";
   try {
-    const res = await fetch("/auto-tracklist", {
+    const res = await fetch(apiBase() + "/auto-tracklist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -388,7 +421,7 @@ async function parsePasted() {
   note.className = "hint";
   note.textContent = "Parsing…";
   try {
-    const res = await fetch("/parse-tracklist", {
+    const res = await fetch(apiBase() + "/parse-tracklist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, duration: state.duration }),
@@ -424,7 +457,7 @@ async function fetch1001() {
   note.className = "hint";
   note.textContent = "Fetching from 1001tracklists… this can take ~30s (it renders the page and bypasses the bot wall).";
   try {
-    const res = await fetch("/parse-tracklist", {
+    const res = await fetch(apiBase() + "/parse-tracklist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: url, duration: state.duration }),
@@ -514,13 +547,7 @@ async function download() {
   };
   startProgress();
   try {
-    const res = await fetch("/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error("Download request failed");
-    const { job_id } = await res.json();
+    const { job_id } = await submitJob({ endpoint: "/download", body });
     streamProgress(job_id);
   } catch (err) {
     setDownloadError("Error: " + err.message);
@@ -550,16 +577,7 @@ async function downloadSplit() {
   };
   startProgress();
   try {
-    const res = await fetch("/download-split", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || "Split request failed");
-    }
-    const { job_id } = await res.json();
+    const { job_id } = await submitJob({ endpoint: "/download-split", body });
     streamProgress(job_id);
   } catch (err) {
     setDownloadError("Error: " + err.message);
@@ -577,7 +595,7 @@ function startProgress() {
 }
 
 function streamProgress(jobId) {
-  const es = new EventSource(`/progress/${jobId}`);
+  const es = new EventSource(`${apiBase()}/progress/${jobId}`);
   es.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     $("progressMsg").textContent = `${ev.stage}: ${ev.message}`;
@@ -595,6 +613,10 @@ function streamProgress(jobId) {
   };
   es.onerror = () => {
     es.close();
+    // The job keeps running on the helper even if the live stream drops
+    // (e.g. n8n-started job whose SSE couldn't attach); say so honestly.
+    $("progressMsg").textContent =
+      "Lost the live progress stream — the job may still be running. Check Recent (or the n8n execution) in a minute.";
     $("downloadBtn").disabled = false;
   };
 }
@@ -609,7 +631,7 @@ function onDone(path) {
 }
 
 async function revealPath(path) {
-  await fetch("/reveal", {
+  await fetch(apiBase() + "/reveal", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path }),
@@ -618,7 +640,7 @@ async function revealPath(path) {
 
 // ---- recents (with thumbnails) ---------------------------------------------
 function loadRecent() {
-  fetch("/recent")
+  fetch(apiBase() + "/recent")
     .then((res) => res.json())
     .then((items) => {
       const ul = $("recent");
