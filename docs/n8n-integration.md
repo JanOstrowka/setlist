@@ -1,21 +1,31 @@
-# n8n Cloud integration — share a YouTube set from your iPhone, get tagged ALAC files on the Mac
+# n8n Cloud integration — orchestrated Setlist jobs (hosted site + Apple Shortcut)
 
-End-to-end flow:
+One webhook, two entry paths:
 
 ```
-iPhone share sheet (Apple Shortcut)
-  → POST https://janostrowka.app.n8n.cloud/webhook/setlist-submit   (header X-N8N-Auth)
-    → n8n calls the Mac app through the tunnel: /resolve + /auto-tracklist
-    → n8n replies to the Shortcut with an approval-form link
-  → you open the form, review/edit metadata + tracklist, approve
-    → n8n starts /download-split (complete tracklist) or /download (otherwise)
-    → the Mac app POSTs a completion summary to n8n's resume URL (callback_url)
-    → workflow ends with a Completion Summary (status, file paths)
+A) Hosted site (https://list-setlist.vercel.app — see docs/hosted-site.md)
+   You review/edit metadata + tracklist IN the site (that's the human-in-the-loop),
+   then click Download:
+   → POST https://janostrowka.app.n8n.cloud/webhook/setlist-submit  (header X-N8N-Auth)
+     body: { url, video_id, format, split, metadata, tracks }   ← full approved job
+     → n8n validates the token → builds the job → calls the Mac helper through the
+       tunnel (/download or /download-split, callback_url = n8n's resume URL)
+     → n8n replies { status:"started", job_id, execution_id } — the site attaches to
+       the helper's LOCAL SSE stream for the live progress bar
+     → helper finishes → callback resumes n8n → Completion Summary (audit trail)
+
+B) iPhone share sheet (Apple Shortcut)
+   → POST the same webhook with just { url }
+     → n8n calls the Mac app through the tunnel: /resolve + /auto-tracklist
+     → n8n replies to the Shortcut with an approval-form link
+   → you open the form, review/edit metadata + tracklist, approve
+     → n8n starts /download-split (complete tracklist) or /download (otherwise)
+     → same callback → Completion Summary
 Files land in ~/Music/YouTube Sets on the Mac — nothing needs to be downloaded.
 ```
 
 The n8n workflow is **"Setlist — YouTube to Apple Music"** (ID `HlTQdjrTUZ3D11aM`,
-<https://janostrowka.app.n8n.cloud/workflow/HlTQdjrTUZ3D11aM>). It was created as a **draft**;
+<https://janostrowka.app.n8n.cloud/workflow/HlTQdjrTUZ3D11aM>). It is a **draft**;
 publish it after the setup below.
 
 ---
@@ -93,16 +103,40 @@ Node graph:
 ```
 Receive YouTube URL (webhook POST /setlist-submit)
 → Config → Check Webhook Token ─(fail)→ Reject (401)
-→ Resolve Set on Mac → Fetch 1001 Tracklist → Prepare Review
-→ Reply With Approval Link (returns approve_url to the Shortcut)
-→ Approve & Edit (Form)  [human-in-the-loop]
-→ Cancelled? ─(yes)→ Cancelled — No Action
-→ Tracklist Provided? ─(yes)→ Parse Edited Tracklist ─┐
-                      └─(no)──────────────────────────┴→ Build Job Request
-→ Split Into Tracks? ─(yes)→ Start Split Download ─┐
-                     └─(no)→ Start Single Download ─┴→ Wait for Mac Callback
-→ Completion Summary
+→ Site Job?  (body has video_id = full approved job from the hosted site)
+   ├─(yes: SITE PATH — no form, already reviewed in the UI)
+   │   → Build Site Job → Start Download on Mac (/download or /download-split)
+   │   → Respond Job Started (job_id + execution_id back to the site)
+   │   → Wait for Mac Callback ────────────────────────────────┐
+   └─(no: SHORTCUT PATH)                                       │
+       → Resolve Set on Mac → Fetch 1001 Tracklist → Prepare Review
+       → Reply With Approval Link (returns approve_url to the Shortcut)
+       → Approve & Edit (Form)  [human-in-the-loop]
+       → Cancelled? ─(yes)→ Cancelled — No Action              │
+       → Tracklist Provided? ─(yes)→ Parse Edited Tracklist ─┐ │
+                             └─(no)──────────────────────────┴→ Build Job Request
+       → Split Into Tracks? ─(yes)→ Start Split Download ─┐    │
+                            └─(no)→ Start Single Download ─┴───┤
+                                                               ↓
+                                              Wait for Mac Callback → Completion Summary
 ```
+
+Site-path payload (sent by the hosted site's Download button):
+
+```json
+{ "url": "…", "video_id": "…", "format": "alac|aac256", "split": true,
+  "metadata": { "title": "…", "artist": "…", … }, "tracks": [{ "start": 0, "title": "…", "artist": "…" }] }
+```
+
+n8n replies `{ "status": "started", "job_id": "…", "split": true, "execution_id": "…" }`
+(the Respond node runs right after the helper accepts the job, then the execution keeps
+waiting for the callback). Tracks without a start time are dropped; `split` only sticks
+if usable tracks remain.
+
+Browser note: the site calls the webhook cross-origin with the `X-N8N-Auth` header, which
+triggers a CORS preflight. The webhook node's *Allowed Origins* option is at its default
+`*`; if a published run ever shows a preflight failure in the browser console, set that
+option explicitly on the *Receive YouTube URL* node.
 
 Steps:
 
@@ -159,15 +193,19 @@ paused execution in n8n and click the form URL from there.
 
 ## 5. Go-live checklist (in order)
 
-1. `.env` has `API_AUTH_TOKEN` + `N8N_WEBHOOK_TOKEN` (done — generated during setup).
-2. Restart the Mac app: `./run.sh` (keeps serving the local UI as before).
+1. `.env` has `API_AUTH_TOKEN` + `N8N_WEBHOOK_TOKEN` (done — generated during setup)
+   and `CORS_ORIGINS` for the hosted site (see `docs/hosted-site.md`).
+2. Restart the Mac app: `./run.sh` — or install it as a login service: `./helper/install.sh`.
 3. Start the tunnel: `tailscale funnel --bg 8765` (approve the Funnel attribute on first run).
 4. Sanity check auth from another network:
    `curl -s https://macbook-pro.tailb2c1e.ts.net/recent` → 401;
    with `-H "Authorization: Bearer $API_AUTH_TOKEN"` → 200.
 5. Paste the three Config values in the n8n workflow (section 3) and **publish** it.
-6. Build the Apple Shortcut (section 4).
-7. Share a YouTube link from the phone and run one real set end-to-end.
+6. Hosted site: open <https://list-setlist.vercel.app> in Chrome on the Mac, open Settings
+   (gear), paste the webhook URL (`https://janostrowka.app.n8n.cloud/webhook/setlist-submit`)
+   and the `N8N_WEBHOOK_TOKEN` value. The helper pill should already be green.
+7. Build the Apple Shortcut (section 4) if you want the share-sheet path too.
+8. Run one real set end-to-end (site Download click, or share from the phone).
 
 Not yet done for you (requires publishing / real downloads): no live end-to-end test was run —
 the workflow is a validated draft, and the Mac-side callback + auth are covered by unit tests.

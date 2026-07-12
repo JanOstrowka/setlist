@@ -1,9 +1,18 @@
 # Setlist
 
-A personal, local-only macOS tool: YouTube → Apple Music. Paste a YouTube URL → download
+A personal macOS tool: YouTube → Apple Music. Paste a YouTube URL → download
 the best audio → transcode losslessly to Apple-Music-compatible **ALAC `.m4a`** (or AAC-256)
 → embed a square JPEG cover + AI-assisted, editable metadata → save a fully tagged file you
 drag into Apple Music. Files-only: nothing is auto-imported.
+
+Three ways to use it (all end with files in `~/Music` on your Mac):
+
+- **Local**: `./run.sh` → <http://127.0.0.1:8765> (loopback only, no config needed).
+- **Hosted site**: <https://list-setlist.vercel.app> — the same UI served from Vercel,
+  talking to the local helper directly, optionally routing jobs through n8n for an
+  audit trail. See `docs/hosted-site.md`.
+- **iPhone share sheet**: an Apple Shortcut posts to n8n, which drives the Mac over a
+  Tailscale Funnel with a form-based approval step. See `docs/n8n-integration.md`.
 
 > The product name ("Setlist") lives in a single place — `APP_NAME` in `app/config.py`,
 > mirrored here and in `pyproject.toml`. The web UI is rendered from an `__APP_NAME__`
@@ -24,6 +33,13 @@ cp .env.example .env   # then edit .env and add your keys
 
 `run.sh` starts the server on `http://127.0.0.1:8765` (loopback only) and opens your browser.
 
+To run it automatically at login instead (the "helper" behind the hosted site):
+
+```bash
+./helper/install.sh    # launchd LaunchAgent; logs to ~/Library/Logs/setlist-helper.log
+./helper/uninstall.sh  # stop + remove
+```
+
 ## Configuration (`.env`)
 
 | Key | Default | Notes |
@@ -35,6 +51,8 @@ cp .env.example .env   # then edit .env and add your keys
 | `DEFAULT_FORMAT` | `alac` | UI toggle switches to `aac256` |
 | `PORT` | `8765` | Loopback server port |
 | `POT_PROVIDER_URL` | empty | Optional PO-token provider sidecar for YouTube bot checks |
+| `CORS_ORIGINS` | empty | Browser origins allowed to call the API cross-origin (the hosted site); empty disables CORS |
+| `API_AUTH_TOKEN` | empty | Bearer token required when the API is exposed through a tunnel (`docs/n8n-integration.md`) |
 
 ## Usage
 

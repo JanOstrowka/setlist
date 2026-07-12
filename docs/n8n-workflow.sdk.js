@@ -1,5 +1,14 @@
 import { workflow, node, trigger, sticky, expr } from '@n8n/workflow-sdk';
 
+// Setlist — YouTube to Apple Music. Two entry paths share one webhook:
+//   1. Hosted-site jobs (body carries video_id + approved metadata/tracklist):
+//      no form — the human already reviewed everything in the site UI. n8n
+//      forwards the job to the Mac helper, replies with the helper's job_id
+//      (the site attaches to the local SSE stream for live progress), then
+//      waits for the completion callback. n8n is the audit trail.
+//   2. Apple-Shortcut jobs (body carries only url): resolve + tracklist fetch
+//      on the Mac, then an n8n form is the human-in-the-loop approval step.
+
 const receiveUrl = trigger({
   type: 'n8n-nodes-base.webhook',
   version: 2.1,
@@ -16,7 +25,14 @@ const receiveUrl = trigger({
     headers: { 'x-n8n-auth': 'webhook-token' },
     params: {},
     query: {},
-    body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+    body: {
+      url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+      video_id: 'dQw4w9WgXcQ',
+      format: 'alac',
+      split: true,
+      metadata: { title: 'Set Title', artist: 'DJ Name', album: 'Festival Set 2026', album_artist: 'DJ Name', year: 2026, genre: 'House', comment: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', compilation: false },
+      tracks: [{ start: 0, title: 'Opener', artist: 'Artist A' }],
+    },
   }],
 });
 
@@ -43,7 +59,7 @@ const setConfig = node({
     macApiToken: 'token',
     webhookToken: 'webhook-token',
     headers: { 'x-n8n-auth': 'webhook-token' },
-    body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+    body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', video_id: 'dQw4w9WgXcQ' },
   }],
 });
 
@@ -65,7 +81,7 @@ const checkToken = node({
     },
     position: [680, 380],
   },
-  output: [{ macBaseUrl: 'https://macbook-pro.tailb2c1e.ts.net', body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } }],
+  output: [{ macBaseUrl: 'https://macbook-pro.tailb2c1e.ts.net', body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', video_id: 'dQw4w9WgXcQ' } }],
 });
 
 const rejectRequest = node({
@@ -78,9 +94,105 @@ const rejectRequest = node({
       responseBody: '{"status":"unauthorized","detail":"Missing or invalid X-N8N-Auth header"}',
       options: { responseCode: 401 },
     },
-    position: [900, 560],
+    position: [900, 620],
   },
   output: [{ status: 'unauthorized' }],
+});
+
+const siteJobCheck = node({
+  type: 'n8n-nodes-base.if',
+  version: 2.3,
+  config: {
+    name: 'Site Job?',
+    parameters: {
+      conditions: {
+        conditions: [
+          {
+            leftValue: expr('{{ $json.body.video_id ?? "" }}'),
+            operator: { type: 'string', operation: 'notEmpty' },
+            rightValue: '',
+          },
+        ],
+      },
+    },
+    position: [900, 340],
+  },
+  output: [{ body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', video_id: 'dQw4w9WgXcQ', split: true } }],
+});
+
+const buildSiteJob = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Build Site Job',
+    parameters: {
+      mode: 'runOnceForAllItems',
+      language: 'javaScript',
+      jsCode: 'const payload = $("Receive YouTube URL").first().json.body;\n' +
+        'const tracks = Array.isArray(payload.tracks) ? payload.tracks : [];\n' +
+        'const usable = tracks.filter((t) => t.start !== null && t.start !== undefined);\n' +
+        'const split = !!payload.split && usable.length > 0;\n' +
+        'const body = {\n' +
+        '  video_id: payload.video_id,\n' +
+        '  url: payload.url,\n' +
+        '  metadata: payload.metadata || {},\n' +
+        '  format: payload.format === "aac256" ? "aac256" : "alac",\n' +
+        '  cover: "keep",\n' +
+        '  callback_url: $execution.resumeUrl,\n' +
+        '};\n' +
+        'if (split) body.tracks = usable.map((t) => ({ start: t.start, title: t.title || "", artist: t.artist || "" }));\n' +
+        'const note = split\n' +
+        '  ? "Split download: " + usable.length + " tracks (reviewed in the site UI)"\n' +
+        '  : "Single-file download (reviewed in the site UI)";\n' +
+        'return [{ json: { split: split, note: note, body: body } }];',
+    },
+    position: [1120, 140],
+  },
+  output: [{
+    split: true,
+    note: 'Split download: 24 tracks (reviewed in the site UI)',
+    body: { video_id: 'dQw4w9WgXcQ', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', metadata: { title: 'Set Title' }, format: 'alac', cover: 'keep', callback_url: 'https://janostrowka.app.n8n.cloud/webhook-waiting/123', tracks: [{ start: 0, title: 'Opener', artist: 'Artist A' }] },
+  }],
+});
+
+const startSiteDownload = node({
+  type: 'n8n-nodes-base.httpRequest',
+  version: 4.4,
+  config: {
+    name: 'Start Download on Mac',
+    parameters: {
+      method: 'POST',
+      url: expr('{{ $("Config").first().json.macBaseUrl }}{{ $json.split ? "/download-split" : "/download" }}'),
+      sendHeaders: true,
+      headerParameters: {
+        parameters: [
+          { name: 'Authorization', value: expr('Bearer {{ $("Config").first().json.macApiToken }}') },
+        ],
+      },
+      sendBody: true,
+      contentType: 'json',
+      specifyBody: 'json',
+      jsonBody: expr('{{ $json.body }}'),
+      options: { timeout: 60000 },
+    },
+    position: [1340, 140],
+  },
+  output: [{ job_id: 'abc123' }],
+});
+
+const respondJobStarted = node({
+  type: 'n8n-nodes-base.respondToWebhook',
+  version: 1.5,
+  config: {
+    name: 'Respond Job Started',
+    parameters: {
+      respondWith: 'json',
+      responseBody: expr('{{ { "status": "started", "job_id": $json.job_id, "split": $("Build Site Job").first().json.split, "note": $("Build Site Job").first().json.note, "execution_id": $execution.id } }}'),
+      options: { responseCode: 200 },
+    },
+    position: [1560, 140],
+  },
+  output: [{ job_id: 'abc123' }],
 });
 
 const resolveSet = node({
@@ -103,7 +215,7 @@ const resolveSet = node({
       jsonBody: expr('{{ { "url": $("Receive YouTube URL").first().json.body.url } }}'),
       options: { timeout: 300000 },
     },
-    position: [900, 300],
+    position: [1120, 460],
   },
   output: [{
     video_id: 'dQw4w9WgXcQ',
@@ -137,7 +249,7 @@ const fetchTracklist = node({
       jsonBody: expr('{{ { "query": $("Resolve Set on Mac").first().json.metadata.title, "url": $("Receive YouTube URL").first().json.body.url, "duration": $("Resolve Set on Mac").first().json.duration } }}'),
       options: { timeout: 180000 },
     },
-    position: [1120, 300],
+    position: [1340, 460],
   },
   output: [{
     source: '1001tracklists',
@@ -183,7 +295,7 @@ const prepareReview = node({
         '  tracklist_text: lines.join("\\n"),\n' +
         '} }];',
     },
-    position: [1340, 300],
+    position: [1560, 460],
   },
   output: [{
     title: 'Set Title',
@@ -207,7 +319,7 @@ const sendReviewLink = node({
       responseBody: expr('{{ { "status": "review_ready", "title": $json.title, "artist": $json.artist, "tracks_found": $json.tracks_found, "tracklist_source": $json.tracklist_source, "approve_url": $execution.resumeFormUrl } }}'),
       options: { responseCode: 200 },
     },
-    position: [1560, 300],
+    position: [1780, 460],
   },
   output: [{
     title: 'Set Title',
@@ -253,7 +365,7 @@ const approvalForm = node({
         ],
       },
     },
-    position: [1780, 300],
+    position: [2000, 460],
   },
   output: [{
     Decision: 'Approve — auto (split when tracklist is complete)',
@@ -282,7 +394,7 @@ const checkCancelled = node({
         ],
       },
     },
-    position: [2000, 300],
+    position: [2220, 460],
   },
   output: [{ Decision: 'Approve — auto (split when tracklist is complete)', Tracklist: '0:00 Artist A - Opener' }],
 });
@@ -290,7 +402,7 @@ const checkCancelled = node({
 const cancelledEnd = node({
   type: 'n8n-nodes-base.noOp',
   version: 1,
-  config: { name: 'Cancelled — No Action', parameters: {}, position: [2220, 520] },
+  config: { name: 'Cancelled — No Action', parameters: {}, position: [2440, 660] },
   output: [{ Decision: 'Cancel' }],
 });
 
@@ -310,7 +422,7 @@ const checkEdited = node({
         ],
       },
     },
-    position: [2220, 240],
+    position: [2440, 400],
   },
   output: [{ Decision: 'Approve — auto (split when tracklist is complete)', Tracklist: '0:00 Artist A - Opener' }],
 });
@@ -335,7 +447,7 @@ const parseEdited = node({
       jsonBody: expr('{{ { "text": $json.Tracklist, "duration": $("Resolve Set on Mac").first().json.duration } }}'),
       options: { timeout: 60000 },
     },
-    position: [2440, 140],
+    position: [2660, 300],
   },
   output: [{
     source: 'manual',
@@ -384,7 +496,7 @@ const buildPayload = node({
         '  : (tracks.length > 0 ? "Single file (tracklist incomplete or single requested)" : "Single file (no tracklist)");\n' +
         'return [{ json: { split: split, note: note, body: body } }];',
     },
-    position: [2660, 240],
+    position: [2880, 400],
   },
   output: [{
     split: true,
@@ -409,7 +521,7 @@ const checkSplit = node({
         ],
       },
     },
-    position: [2880, 240],
+    position: [3100, 400],
   },
   output: [{ split: true, body: {} }],
 });
@@ -434,7 +546,7 @@ const startSplit = node({
       jsonBody: expr('{{ $json.body }}'),
       options: { timeout: 60000 },
     },
-    position: [3100, 140],
+    position: [3320, 300],
   },
   output: [{ job_id: 'abc123' }],
 });
@@ -459,7 +571,7 @@ const startSingle = node({
       jsonBody: expr('{{ $json.body }}'),
       options: { timeout: 60000 },
     },
-    position: [3100, 360],
+    position: [3320, 520],
   },
   output: [{ job_id: 'abc123' }],
 });
@@ -474,7 +586,7 @@ const waitForJob = node({
       httpMethod: 'POST',
       responseCode: 200,
     },
-    position: [3320, 240],
+    position: [3540, 340],
   },
   output: [{
     headers: {},
@@ -501,7 +613,7 @@ const jobSummary = node({
       },
       includeOtherFields: false,
     },
-    position: [3540, 240],
+    position: [3760, 340],
   },
   output: [{
     status: 'done',
@@ -512,7 +624,7 @@ const jobSummary = node({
 });
 
 const setupNote = sticky(
-  '## One-time setup\n1. Open the Config node and paste values from the Mac repo .env: macApiToken = API_AUTH_TOKEN, webhookToken = N8N_WEBHOOK_TOKEN. Set macBaseUrl to your tunnel URL.\n2. Start the tunnel on the Mac (see docs/n8n-integration.md in the repo).\n3. Publish this workflow, then call POST /webhook/setlist-submit with header X-N8N-Auth from the Apple Shortcut.\n\nOptional hardening: create a Header Auth credential (name: X-N8N-Auth) and set it on the Receive YouTube URL node, then clear webhookToken from Config.',
+  '## One-time setup\n1. Open the Config node and paste values from the Mac repo .env: macApiToken = API_AUTH_TOKEN, webhookToken = N8N_WEBHOOK_TOKEN. Set macBaseUrl to your tunnel URL.\n2. Start the tunnel on the Mac (see docs/n8n-integration.md in the repo).\n3. Publish this workflow.\n\nTwo entry paths share POST /webhook/setlist-submit (header X-N8N-Auth):\n- Hosted site sends a full approved job (video_id + metadata + tracklist) -> no form; n8n replies with the Mac job_id so the site can stream live progress locally.\n- Apple Shortcut sends just { url } -> resolve on the Mac, then the approval form.\n\nOptional hardening: create a Header Auth credential (name: X-N8N-Auth) and set it on the Receive YouTube URL node, then clear webhookToken from Config.',
   [setConfig],
   { color: 4 },
 );
@@ -529,7 +641,9 @@ export default workflow('setlist-yt-to-apple-music', 'Setlist — YouTube to App
   .add(receiveUrl)
   .to(setConfig)
   .to(checkToken
-    .onTrue(resolveSet.to(fetchTracklist.to(prepareReview.to(sendReviewLink.to(approvalForm)))))
+    .onTrue(siteJobCheck
+      .onTrue(buildSiteJob.to(startSiteDownload.to(respondJobStarted.to(waitForJob))))
+      .onFalse(resolveSet.to(fetchTracklist.to(prepareReview.to(sendReviewLink.to(approvalForm))))))
     .onFalse(rejectRequest))
   .add(approvalForm)
   .to(checkCancelled
