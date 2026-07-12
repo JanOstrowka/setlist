@@ -24,6 +24,19 @@ def _expand(path_str: str) -> Path:
     return Path(os.path.expanduser(path_str)).resolve()
 
 
+def _parse_origins(raw: str) -> tuple[str, ...]:
+    """Comma-separated origin list -> normalized tuple (no trailing slashes).
+
+    Origins compare byte-exact in CORS, so "https://x.app/" would never match
+    the browser's "https://x.app" — normalize once here.
+    """
+    return tuple(
+        origin.strip().rstrip("/")
+        for origin in raw.split(",")
+        if origin.strip()
+    )
+
+
 @dataclass(frozen=True)
 class Config:
     openai_api_key: str | None
@@ -34,6 +47,7 @@ class Config:
     port: int
     pot_provider_url: str | None
     api_auth_token: str | None
+    cors_origins: tuple[str, ...]
 
 
 def load_config() -> Config:
@@ -46,4 +60,5 @@ def load_config() -> Config:
         port=int(os.getenv("PORT", "8765")),
         pot_provider_url=os.getenv("POT_PROVIDER_URL") or None,
         api_auth_token=os.getenv("API_AUTH_TOKEN") or None,
+        cors_origins=_parse_origins(os.getenv("CORS_ORIGINS", "")),
     )

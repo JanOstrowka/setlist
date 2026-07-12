@@ -265,8 +265,9 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
 # Paths that stay public even when API auth is enabled: the UI shell and its
 # assets carry no secrets, and the browser can't attach an Authorization header
-# to plain page/asset loads anyway.
-PUBLIC_PATHS = {"/", "/favicon.ico"}
+# to plain page/asset loads anyway. /health is the hosted site's
+# helper-detection ping; it reveals nothing beyond "the app is running".
+PUBLIC_PATHS = {"/", "/favicon.ico", "/health"}
 
 
 def _is_direct_local_request(request: Request) -> bool:
@@ -309,6 +310,60 @@ async def require_bearer_token(request: Request, call_next):
     return await call_next(request)
 
 
+def _cors_headers(origin: str) -> dict[str, str]:
+    return {
+        "Access-Control-Allow-Origin": origin,
+        # No cookies/credentials are used, so Allow-Credentials stays off and
+        # the exact-origin echo (not "*") is only needed for config symmetry.
+        "Vary": "Origin",
+    }
+
+
+# Registered after require_bearer_token so it wraps it (Starlette runs the
+# last-added middleware first): preflights are answered before auth can 401
+# them, and ACAO headers land on auth failures too, so the browser surfaces
+# the real 401 instead of a masked CORS error.
+@app.middleware("http")
+async def cors_for_hosted_site(request: Request, call_next):
+    """Hand-rolled CORS so the allowed origins come from live config.
+
+    The hosted site (e.g. https://setlist.vercel.app) calls this server at
+    127.0.0.1 straight from the browser. Only origins listed in CORS_ORIGINS
+    are allowed; with the variable unset the app never emits a CORS header and
+    cross-origin pages are blocked by the browser exactly as before.
+
+    Also answers Chrome's Private Network Access preflight (a public HTTPS page
+    fetching a loopback address sends Access-Control-Request-Private-Network;
+    the response must opt in) so future Chrome enforcement doesn't break the
+    site->helper path.
+    """
+    origin = request.headers.get("origin", "")
+    allowed = origin.rstrip("/") in cfg.cors_origins if origin else False
+
+    is_preflight = (
+        request.method == "OPTIONS"
+        and "access-control-request-method" in request.headers
+    )
+    if is_preflight:
+        if not allowed:
+            return Response(status_code=400, content="Origin not allowed")
+        headers = _cors_headers(origin)
+        headers.update({
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers":
+                request.headers.get("access-control-request-headers", "Content-Type, Authorization"),
+            "Access-Control-Max-Age": "600",
+        })
+        if request.headers.get("access-control-request-private-network", "").lower() == "true":
+            headers["Access-Control-Allow-Private-Network"] = "true"
+        return Response(status_code=204, headers=headers)
+
+    response = await call_next(request)
+    if allowed:
+        response.headers.update(_cors_headers(origin))
+    return response
+
+
 class RevealRequest(BaseModel):
     path: str
 
@@ -334,6 +389,12 @@ def index() -> HTMLResponse:
 def favicon() -> Response:
     # Browsers auto-request /favicon.ico; return 204 to silence the 404 noise.
     return Response(status_code=204)
+
+
+@app.get("/health")
+def health_endpoint() -> dict:
+    """Lightweight liveness ping for the hosted site's helper detection."""
+    return {"status": "ok", "app": APP_NAME}
 
 
 @app.post("/resolve", response_model=ResolveResponse)
