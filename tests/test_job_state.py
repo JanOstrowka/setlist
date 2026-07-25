@@ -241,9 +241,7 @@ def test_cancellation_between_final_checkpoint_and_completion_wins(monkeypatch):
     finally:
         allow_completion.set()
 
-    _wait_for(
-        lambda: manager.get_snapshot(job_id).status in {"completed", "cancelled"}
-    )
+    _wait_for(lambda: len(callback_payloads) == 1)
     events = _drain_events(manager, job_id)
     terminal = [event for event in events if event.stage in TERMINAL_STAGES]
     snapshot = manager.get_snapshot(job_id)
