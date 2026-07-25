@@ -65,8 +65,52 @@ class SplitDownloadRequest(BaseModel):
     callback_url: str = ""  # optional: POSTed a completion summary when the job ends
 
 
+TrackProgressState = Literal["pending", "cutting", "tagging", "ready"]
+JobStatus = Literal[
+    "queued", "processing", "cancelling", "completed", "failed", "cancelled", "interrupted"
+]
+ProgressStage = Literal[
+    "queued", "download", "encode", "split", "tag", "done", "error", "cancelled"
+]
+
+
 class ProgressEvent(BaseModel):
-    stage: Literal["queued", "download", "encode", "split", "tag", "done", "error"]
+    stage: ProgressStage
     pct: float = 0.0
+    stage_pct: Optional[float] = None
+    overall_pct: Optional[float] = None
     message: str = ""
+    track_index: Optional[int] = None
+    track_count: Optional[int] = None
+    track_title: Optional[str] = None
+    track_state: Optional[TrackProgressState] = None
+    downloaded_bytes: Optional[int] = None
+    total_bytes: Optional[int] = None
+    speed_bytes_per_second: Optional[float] = None
+    eta_seconds: Optional[float] = None
     file_path: Optional[str] = None
+
+    def model_post_init(self, __context) -> None:
+        if self.stage_pct is None:
+            self.stage_pct = self.pct
+        if self.overall_pct is None:
+            spans = {
+                "queued": (0.0, 0.0),
+                "download": (0.0, 40.0),
+                "encode": (40.0, 70.0),
+                "split": (70.0, 90.0),
+                "tag": (90.0, 100.0),
+                "done": (100.0, 100.0),
+                "error": (0.0, 0.0),
+                "cancelled": (0.0, 0.0),
+            }
+            start, end = spans[self.stage]
+            self.overall_pct = start + (end - start) * self.pct / 100.0
+
+
+class JobSnapshot(BaseModel):
+    job_id: str
+    status: JobStatus
+    latest: ProgressEvent
+    output_paths: list[str] = Field(default_factory=list)
+    error: str = ""
