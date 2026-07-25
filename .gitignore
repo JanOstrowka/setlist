@@ -18,6 +18,7 @@ venv/
 # Build artifacts
 dist/
 build/
+macos/.build/
 .worktrees/
 
 # Node
