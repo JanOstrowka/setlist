@@ -232,6 +232,214 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertTrue(request.metadata.title == "Fixture Set")
     }
 
+    func testResolveIsBlockedWhileProcessing() async throws {
+        let streamProbe = StreamProbe()
+        let api = StubAPI(
+            resolve: { url in .fixture(videoID: url) },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("original")
+        let processing = Task { await controller.process() }
+        try await waitUntil { await streamProbe.didStart }
+
+        await controller.resolve("replacement")
+
+        guard case .processing = controller.state else {
+            controller.shutdown()
+            await processing.value
+            return XCTFail("Expected original processing state")
+        }
+        XCTAssertEqual(history.records.count, 1)
+        XCTAssertEqual(history.records.first?.sourceURL, "original")
+        controller.shutdown()
+        await processing.value
+    }
+
+    func testStartingResolveFromReviewingInterruptsAbandonedRecord() async throws {
+        let api = StubAPI(resolve: { url in .fixture(videoID: url) })
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("old")
+
+        await controller.resolve("new")
+
+        XCTAssertEqual(history.records.count, 2)
+        XCTAssertEqual(
+            history.records.first(where: { $0.sourceURL == "old" })?.status,
+            .interrupted
+        )
+        guard case .reviewing(let draft) = controller.state else {
+            return XCTFail("Expected new reviewing state")
+        }
+        XCTAssertEqual(draft.sourceURL, "new")
+    }
+
+    func testTerminalErrorEventFailsImmediatelyWithoutGET() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in
+                .events([
+                    .init(stage: .error, pct: 70, message: "Encoder exploded"),
+                ])
+            }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+
+        await controller.process()
+
+        guard case .failed(let failure) = controller.state else {
+            return XCTFail("Expected failed state")
+        }
+        XCTAssertEqual(failure.message, "Encoder exploded")
+        XCTAssertEqual(history.records.first?.status, .failed)
+        XCTAssertEqual(history.records.first?.stage, .error)
+        let jobRequests = await api.jobRequestsSnapshot()
+        XCTAssertEqual(jobRequests, [])
+    }
+
+    func testTerminalCancelledEventPersistsCancelledWithoutGET() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in
+                .events([
+                    .init(stage: .cancelled, pct: 40, message: "User cancelled"),
+                ])
+            }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+
+        await controller.process()
+
+        guard case .failed(let failure) = controller.state else {
+            return XCTFail("Expected terminal cancelled state")
+        }
+        XCTAssertEqual(failure.message, "User cancelled")
+        XCTAssertEqual(history.records.first?.status, .cancelled)
+        XCTAssertEqual(history.records.first?.stage, .cancelled)
+        let jobRequests = await api.jobRequestsSnapshot()
+        XCTAssertEqual(jobRequests, [])
+    }
+
+    func testTerminalDoneWithGETFailurePreservesFallbackCompletion() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in
+                .events([
+                    .init(
+                        stage: .done,
+                        pct: 100,
+                        message: "Done",
+                        filePath: "/tmp/fallback.m4a"
+                    ),
+                ])
+            },
+            job: { _ in throw StubError.disconnected }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+
+        await controller.process()
+
+        guard case .completed(let completed) = controller.state else {
+            return XCTFail("Expected recoverable completion")
+        }
+        XCTAssertEqual(completed.outputPaths, ["/tmp/fallback.m4a"])
+        XCTAssertEqual(history.records.first?.status, .completed)
+        XCTAssertEqual(history.records.first?.stage, .done)
+        XCTAssertEqual(history.records.first?.errorSummary, "disconnected")
+    }
+
+    func testTerminalDonePollsNonterminalSnapshotUntilCompleted() async throws {
+        let snapshots = SnapshotQueue([
+            .processing(jobID: "job-1"),
+            .processing(jobID: "job-1"),
+            .completed(jobID: "job-1", paths: ["/tmp/final.m4a"]),
+        ])
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .events([.init(stage: .done, pct: 100)]) },
+            job: { _ in try await snapshots.next() }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+
+        await controller.process()
+
+        guard case .completed(let completed) = controller.state else {
+            return XCTFail("Expected completion after polling")
+        }
+        XCTAssertEqual(completed.outputPaths, ["/tmp/final.m4a"])
+        let jobRequests = await api.jobRequestsSnapshot()
+        XCTAssertEqual(jobRequests.count, 3)
+        XCTAssertEqual(history.records.first?.status, .completed)
+    }
+
+    func testCallerCancellationAfterSubmitCancelsBackendAndPersistsJobID() async throws {
+        let submitGate = ValueGate<String>()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in try await submitGate.wait(for: "submit") },
+            progress: { _ in .events([]) },
+            job: { _ in .completed(jobID: "job-1", paths: []) },
+            cancel: { _ in .cancelled(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+        let processing = Task { await controller.process() }
+        try await waitUntil { await submitGate.hasWaiter(for: "submit") }
+
+        processing.cancel()
+        await submitGate.resume(.success("job-1"), for: "submit")
+        await processing.value
+
+        let cancelRequests = await api.cancelRequestsSnapshot()
+        XCTAssertEqual(cancelRequests, ["job-1"])
+        XCTAssertEqual(history.records.first?.backendJobID, "job-1")
+        XCTAssertEqual(history.records.first?.status, .cancelled)
+        XCTAssertEqual(history.records.first?.stage, .cancelled)
+    }
+
+    func testShutdownTerminatesProgressAndAllowsControllerDeallocation() async throws {
+        let streamProbe = StreamProbe()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) }
+        )
+        let history = try makeHistory()
+        var controller: WorkflowController? = WorkflowController(
+            api: api,
+            history: history
+        )
+        await controller?.resolve("source")
+        weak let weakController = controller
+        let processing = Task { [weak controller] in
+            await controller?.process()
+        }
+        try await waitUntil { await streamProbe.didStart }
+
+        controller?.shutdown()
+        controller = nil
+        await processing.value
+        try await waitUntil { await streamProbe.didTerminate }
+
+        XCTAssertNil(weakController)
+    }
+
     func testProgressDisconnectReconcilesCompletedJobBeforeFailing() async throws {
         let api = StubAPI(
             resolve: { _ in .fixture(videoID: "video") },
@@ -362,6 +570,34 @@ private actor ValueGate<Value: Sendable> {
     }
 }
 
+private actor StreamProbe {
+    private(set) var didStart = false
+    private(set) var didTerminate = false
+
+    func started() {
+        didStart = true
+    }
+
+    func terminated() {
+        didTerminate = true
+    }
+}
+
+private actor SnapshotQueue {
+    private var snapshots: [APIJobSnapshot]
+
+    init(_ snapshots: [APIJobSnapshot]) {
+        self.snapshots = snapshots
+    }
+
+    func next() throws -> APIJobSnapshot {
+        guard !snapshots.isEmpty else {
+            throw StubError.unconfigured
+        }
+        return snapshots.removeFirst()
+    }
+}
+
 private actor StubAPI: SetlistAPIProtocol {
     typealias Resolve = @Sendable (String) async throws -> APIResolveResponse
     typealias AutoTracklist = @Sendable (String, String, Int) async throws -> APITracklist
@@ -370,6 +606,7 @@ private actor StubAPI: SetlistAPIProtocol {
     typealias SubmitSplit = @Sendable (APISplitDownloadRequest) async throws -> String
     typealias Progress = @Sendable (String) -> AsyncThrowingStream<APIProgressEvent, Error>
     typealias Job = @Sendable (String) async throws -> APIJobSnapshot
+    typealias Cancel = @Sendable (String) async throws -> APIJobSnapshot
 
     private let resolveHandler: Resolve
     private let autoTracklistHandler: AutoTracklist
@@ -378,10 +615,12 @@ private actor StubAPI: SetlistAPIProtocol {
     private let submitSplitHandler: SubmitSplit
     nonisolated private let progressHandler: Progress
     private let jobHandler: Job
+    private let cancelHandler: Cancel
 
     private(set) var singleRequests: [APIDownloadRequest] = []
     private(set) var splitRequests: [APISplitDownloadRequest] = []
     private(set) var jobRequests: [String] = []
+    private(set) var cancelRequests: [String] = []
 
     init(
         resolve: @escaping Resolve = { _ in throw StubError.unconfigured },
@@ -390,7 +629,8 @@ private actor StubAPI: SetlistAPIProtocol {
         submit: @escaping Submit = { _ in throw StubError.unconfigured },
         submitSplit: @escaping SubmitSplit = { _ in throw StubError.unconfigured },
         progress: @escaping Progress = { _ in .events([]) },
-        job: @escaping Job = { _ in throw StubError.unconfigured }
+        job: @escaping Job = { _ in throw StubError.unconfigured },
+        cancel: @escaping Cancel = { _ in throw StubError.unconfigured }
     ) {
         resolveHandler = resolve
         autoTracklistHandler = autoTracklist
@@ -399,6 +639,7 @@ private actor StubAPI: SetlistAPIProtocol {
         submitSplitHandler = submitSplit
         progressHandler = progress
         jobHandler = job
+        cancelHandler = cancel
     }
 
     func resolve(url: String) async throws -> APIResolveResponse {
@@ -439,7 +680,8 @@ private actor StubAPI: SetlistAPIProtocol {
     }
 
     func cancel(jobID: String) async throws -> APIJobSnapshot {
-        try await jobHandler(jobID)
+        cancelRequests.append(jobID)
+        return try await cancelHandler(jobID)
     }
 
     func singleRequestsSnapshot() -> [APIDownloadRequest] {
@@ -448,6 +690,10 @@ private actor StubAPI: SetlistAPIProtocol {
 
     func jobRequestsSnapshot() -> [String] {
         jobRequests
+    }
+
+    func cancelRequestsSnapshot() -> [String] {
+        cancelRequests
     }
 }
 
@@ -519,6 +765,18 @@ private extension APIJobSnapshot {
             latest: .init(stage: .download, pct: 10, message: "Downloading")
         )
     }
+
+    static func cancelled(jobID: String) -> Self {
+        .init(
+            jobID: jobID,
+            status: .cancelled,
+            latest: .init(
+                stage: .cancelled,
+                pct: 100,
+                message: "Cancelled"
+            )
+        )
+    }
 }
 
 private extension AsyncThrowingStream where Element == APIProgressEvent, Failure == Error {
@@ -532,6 +790,19 @@ private extension AsyncThrowingStream where Element == APIProgressEvent, Failure
     static func failure(_ error: any Error) -> Self {
         Self { continuation in
             continuation.finish(throwing: error)
+        }
+    }
+
+    static func open(probe: StreamProbe) -> Self {
+        Self { continuation in
+            Task {
+                await probe.started()
+            }
+            continuation.onTermination = { @Sendable _ in
+                Task {
+                    await probe.terminated()
+                }
+            }
         }
     }
 }

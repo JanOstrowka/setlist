@@ -35,6 +35,13 @@ final class WorkflowController {
     }
 
     func resolve(_ sourceURL: String) async {
+        guard case .processing = state else {
+            await beginResolve(sourceURL)
+            return
+        }
+    }
+
+    private func beginResolve(_ sourceURL: String) async {
         do {
             try cancelActiveWorkForNewResolve()
         } catch {
@@ -165,6 +172,18 @@ final class WorkflowController {
         )
     }
 
+    func shutdown() {
+        resolveToken = nil
+        tracklistToken = nil
+        progressToken = nil
+        resolveTask?.cancel()
+        tracklistTask?.cancel()
+        progressTask?.cancel()
+        resolveTask = nil
+        tracklistTask = nil
+        progressTask = nil
+    }
+
     func process() async {
         guard case .reviewing(let draft) = state else {
             return
@@ -228,20 +247,34 @@ final class WorkflowController {
                     )
                 }
 
-                try Task.checkCancellation()
-                guard let self, self.progressToken == token else {
+                guard try self?.persistSubmittedJobIfCurrent(
+                    jobID,
+                    frozenDraft: frozenDraft,
+                    token: token
+                ) == true else {
+                    if Task.isCancelled {
+                        _ = try? await Task.detached {
+                            try await api.cancel(jobID: jobID)
+                        }.value
+                    }
                     return
                 }
-                try self.persistSubmittedJob(
-                    jobID,
-                    frozenDraft: frozenDraft
-                )
 
-                do {
-                    for try await event in api.progress(jobID: jobID) {
-                        try Task.checkCancellation()
-                        guard self.progressToken == token else {
-                            return
+                if Task.isCancelled {
+                    await self?.cancelSubmittedJob(
+                        jobID: jobID,
+                        frozenDraft: frozenDraft,
+                        token: token
+                    )
+                    return
+                }
+
+                let outcome = await Self.consumeProgress(
+                    api: api,
+                    jobID: jobID,
+                    onProgress: { [weak self] event in
+                        guard let self, self.progressToken == token else {
+                            throw CancellationError()
                         }
                         try self.apply(
                             event,
@@ -249,29 +282,13 @@ final class WorkflowController {
                             frozenDraft: frozenDraft
                         )
                     }
-                    try Task.checkCancellation()
-                    guard self.progressToken == token else {
-                        return
-                    }
-                    await self.reconcile(
-                        jobID: jobID,
-                        frozenDraft: frozenDraft,
-                        token: token,
-                        streamError: nil
-                    )
-                } catch is CancellationError {
-                    return
-                } catch {
-                    guard self.progressToken == token else {
-                        return
-                    }
-                    await self.reconcile(
-                        jobID: jobID,
-                        frozenDraft: frozenDraft,
-                        token: token,
-                        streamError: error
-                    )
-                }
+                )
+                await self?.handleProgressOutcome(
+                    outcome,
+                    jobID: jobID,
+                    frozenDraft: frozenDraft,
+                    token: token
+                )
             } catch is CancellationError {
                 return
             } catch {
@@ -287,7 +304,11 @@ final class WorkflowController {
         }
 
         progressTask = task
-        await task.value
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         if progressToken == token {
             progressTask = nil
             progressToken = nil
@@ -414,6 +435,265 @@ final class WorkflowController {
         )
     }
 
+    private func persistSubmittedJobIfCurrent(
+        _ jobID: String,
+        frozenDraft: SetDraft,
+        token: UUID
+    ) throws -> Bool {
+        guard progressToken == token else {
+            return false
+        }
+        try persistSubmittedJob(jobID, frozenDraft: frozenDraft)
+        return true
+    }
+
+    private nonisolated static func consumeProgress(
+        api: any SetlistAPIProtocol,
+        jobID: String,
+        onProgress: @MainActor @escaping @Sendable (APIProgressEvent) async throws -> Void
+    ) async -> ProgressStreamOutcome {
+        do {
+            for try await event in api.progress(jobID: jobID) {
+                try Task.checkCancellation()
+                switch event.stage {
+                case .done, .error, .cancelled:
+                    return .terminal(event)
+                case .queued, .download, .encode, .split, .tag:
+                    try await onProgress(event)
+                }
+            }
+            return .disconnected(nil)
+        } catch is CancellationError {
+            return .cancelledByTask
+        } catch {
+            return .disconnected(String(describing: error))
+        }
+    }
+
+    private func handleProgressOutcome(
+        _ outcome: ProgressStreamOutcome,
+        jobID: String,
+        frozenDraft: SetDraft,
+        token: UUID
+    ) async {
+        guard progressToken == token else {
+            return
+        }
+
+        switch outcome {
+        case .terminal(let event):
+            do {
+                switch event.stage {
+                case .error:
+                    try applyTerminal(
+                        event,
+                        status: .failed,
+                        jobID: jobID,
+                        frozenDraft: frozenDraft
+                    )
+                case .cancelled:
+                    try applyTerminal(
+                        event,
+                        status: .cancelled,
+                        jobID: jobID,
+                        frozenDraft: frozenDraft
+                    )
+                case .done:
+                    try applyDone(
+                        event,
+                        jobID: jobID,
+                        frozenDraft: frozenDraft
+                    )
+                    await reconcileDone(
+                        jobID: jobID,
+                        frozenDraft: frozenDraft,
+                        token: token
+                    )
+                case .queued, .download, .encode, .split, .tag:
+                    break
+                }
+            } catch {
+                fail(
+                    recordID: frozenDraft.historyID,
+                    backendJobID: jobID,
+                    error: error
+                )
+            }
+        case .disconnected(let message):
+            await reconcile(
+                jobID: jobID,
+                frozenDraft: frozenDraft,
+                token: token,
+                streamError: message.map(WorkflowProgressError.init(message:))
+            )
+        case .cancelledByTask:
+            await cancelSubmittedJob(
+                jobID: jobID,
+                frozenDraft: frozenDraft,
+                token: token
+            )
+        }
+    }
+
+    private func cancelSubmittedJob(
+        jobID: String,
+        frozenDraft: SetDraft,
+        token: UUID
+    ) async {
+        let api = api
+        do {
+            let snapshot = try await Task.detached {
+                var snapshot = try await api.cancel(jobID: jobID)
+                for _ in 0..<3 {
+                    switch snapshot.status {
+                    case .completed, .failed, .cancelled, .interrupted:
+                        return snapshot
+                    case .queued, .processing, .cancelling:
+                        try await Task.sleep(for: .milliseconds(10))
+                        snapshot = try await api.job(jobID: jobID)
+                    }
+                }
+                return snapshot
+            }.value
+
+            guard progressToken == token else {
+                return
+            }
+            switch snapshot.status {
+            case .completed, .failed, .cancelled, .interrupted:
+                try apply(
+                    snapshot: snapshot,
+                    frozenDraft: frozenDraft,
+                    streamError: nil
+                )
+            case .queued, .processing, .cancelling:
+                guard let record = record(id: frozenDraft.historyID) else {
+                    return
+                }
+                try persistTerminalFailure(
+                    record: record,
+                    status: .interrupted,
+                    message: "Cancellation was requested and is still being reconciled."
+                )
+            }
+        } catch {
+            guard progressToken == token else {
+                return
+            }
+            fail(
+                recordID: frozenDraft.historyID,
+                backendJobID: jobID,
+                error: error
+            )
+        }
+    }
+
+    private func applyTerminal(
+        _ event: APIProgressEvent,
+        status: HistoryStatus,
+        jobID: String,
+        frozenDraft: SetDraft
+    ) throws {
+        guard let record = record(id: frozenDraft.historyID) else {
+            throw WorkflowPersistenceError.missingRecord(frozenDraft.historyID)
+        }
+        record.backendJobID = jobID
+        record.stage = HistoryStage(event.stage)
+        if let filePath = event.filePath,
+           !record.outputPaths.contains(filePath) {
+            record.outputPaths.append(filePath)
+        }
+        let fallback = status == .cancelled ? "Cancelled" : "Processing failed"
+        try persistTerminalFailure(
+            record: record,
+            status: status,
+            message: event.message.isEmpty ? fallback : event.message
+        )
+    }
+
+    private func applyDone(
+        _ event: APIProgressEvent,
+        jobID: String,
+        frozenDraft: SetDraft
+    ) throws {
+        guard let record = record(id: frozenDraft.historyID) else {
+            throw WorkflowPersistenceError.missingRecord(frozenDraft.historyID)
+        }
+        if let filePath = event.filePath,
+           !record.outputPaths.contains(filePath) {
+            record.outputPaths.append(filePath)
+        }
+        try persistCompleted(
+            record: record,
+            jobID: jobID,
+            outputPaths: record.outputPaths
+        )
+    }
+
+    private func reconcileDone(
+        jobID: String,
+        frozenDraft: SetDraft,
+        token: UUID
+    ) async {
+        let maximumAttempts = 4
+
+        for attempt in 0..<maximumAttempts {
+            do {
+                let snapshot = try await api.job(jobID: jobID)
+                guard progressToken == token else {
+                    return
+                }
+                guard let record = record(id: frozenDraft.historyID) else {
+                    return
+                }
+                merge(snapshot.outputPaths, into: record)
+
+                if snapshot.status == .completed {
+                    try persistCompleted(
+                        record: record,
+                        jobID: jobID,
+                        outputPaths: record.outputPaths
+                    )
+                    return
+                }
+
+                if snapshot.status == .queued
+                    || snapshot.status == .processing
+                    || snapshot.status == .cancelling {
+                    if attempt + 1 < maximumAttempts {
+                        try await Task.sleep(for: .milliseconds(10))
+                        continue
+                    }
+                    try persistCompletionNote(
+                        record: record,
+                        message: "Final output paths are still being reconciled."
+                    )
+                    return
+                }
+
+                try persistCompletionNote(
+                    record: record,
+                    message: snapshot.error.isEmpty
+                        ? "Backend status differed after completion."
+                        : snapshot.error
+                )
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                guard progressToken == token,
+                      let record = record(id: frozenDraft.historyID) else {
+                    return
+                }
+                try? persistCompletionNote(
+                    record: record,
+                    message: Self.describe(error)
+                )
+                return
+            }
+        }
+    }
+
     private func apply(
         _ event: APIProgressEvent,
         jobID: String,
@@ -486,27 +766,15 @@ final class WorkflowController {
 
         record.backendJobID = snapshot.jobID
         record.stage = stage
-        for outputPath in snapshot.outputPaths
-        where !record.outputPaths.contains(outputPath) {
-            record.outputPaths.append(outputPath)
-        }
+        merge(snapshot.outputPaths, into: record)
         record.updatedAt = Date()
 
         switch snapshot.status {
         case .completed:
-            let completedAt = Date()
-            record.status = .completed
-            record.stage = .done
-            record.errorSummary = nil
-            record.completedAt = completedAt
-            try history.save()
-            state = .completed(
-                CompletedJob(
-                    recordID: frozenDraft.historyID,
-                    backendJobID: snapshot.jobID,
-                    outputPaths: record.outputPaths,
-                    completedAt: completedAt
-                )
+            try persistCompleted(
+                record: record,
+                jobID: snapshot.jobID,
+                outputPaths: record.outputPaths
             )
         case .failed:
             try persistTerminalFailure(
@@ -556,6 +824,61 @@ final class WorkflowController {
                 failedAt: failedAt
             )
         )
+    }
+
+    private func persistCompleted(
+        record: HistoryRecord,
+        jobID: String,
+        outputPaths: [String]
+    ) throws {
+        let completedAt = record.completedAt ?? Date()
+        record.backendJobID = jobID
+        record.status = .completed
+        record.stage = .done
+        record.errorSummary = nil
+        record.outputPaths = outputPaths
+        record.completedAt = completedAt
+        record.updatedAt = Date()
+        try history.save()
+        state = .completed(
+            CompletedJob(
+                recordID: record.id,
+                backendJobID: jobID,
+                outputPaths: outputPaths,
+                completedAt: completedAt
+            )
+        )
+    }
+
+    private func persistCompletionNote(
+        record: HistoryRecord,
+        message: String
+    ) throws {
+        record.status = .completed
+        record.stage = .done
+        record.errorSummary = message
+        record.updatedAt = Date()
+        try history.save()
+        if case .completed(let completed) = state {
+            state = .completed(
+                CompletedJob(
+                    recordID: completed.recordID,
+                    backendJobID: completed.backendJobID,
+                    outputPaths: record.outputPaths,
+                    completedAt: completed.completedAt
+                )
+            )
+        }
+    }
+
+    private func merge(
+        _ outputPaths: [String],
+        into record: HistoryRecord
+    ) {
+        for outputPath in outputPaths
+        where !record.outputPaths.contains(outputPath) {
+            record.outputPaths.append(outputPath)
+        }
     }
 
     private func persistNonterminalError(
@@ -614,7 +937,7 @@ final class WorkflowController {
 
         guard let interruptedID,
               let record = record(id: interruptedID),
-              record.status == .resolving || record.status == .processing else {
+              record.status == .resolving || record.status == .reviewing else {
             return
         }
         let interruptedAt = Date()
@@ -666,4 +989,18 @@ final class WorkflowController {
 
 private enum WorkflowPersistenceError: Error {
     case missingRecord(UUID)
+}
+
+private enum ProgressStreamOutcome: Sendable {
+    case terminal(APIProgressEvent)
+    case disconnected(String?)
+    case cancelledByTask
+}
+
+private struct WorkflowProgressError: Error, CustomStringConvertible {
+    let message: String
+
+    var description: String {
+        message
+    }
 }
