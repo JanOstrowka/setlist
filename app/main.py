@@ -118,7 +118,9 @@ class JobManager:
                     "job_id": job_id, "status": "error", "output_paths": [], "error": message,
                 })
             else:
-                self.jobs[job_id].complete(paths)
+                record = self.jobs[job_id]
+                record.complete(paths)
+                self._emit(job_id, record.latest)
                 self._post_callback(req, {
                     "job_id": job_id, "status": "done", "output_paths": paths, "error": "",
                 })
@@ -192,7 +194,6 @@ class JobManager:
                 "album": req.metadata.album,
                 "video_id": req.video_id,  # lets the UI show a YouTube thumbnail
             })
-            self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message="Saved", file_path=str(dest)))
             return [str(dest)]
 
     def _process_split(self, job_id: str, req: SplitDownloadRequest) -> list[str]:
@@ -258,7 +259,6 @@ class JobManager:
                 "album": req.metadata.album,
                 "video_id": req.video_id,  # lets the UI show a YouTube thumbnail
             })
-            self._emit(job_id, ProgressEvent(stage="done", pct=100.0, message=f"Saved {total} tracks", file_path=str(set_dir)))
             return [str(set_dir / f.name) for f in files]
 
 
@@ -501,16 +501,21 @@ async def progress_endpoint(job_id: str) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="Unknown job")
 
     async def event_stream():
-        while True:
-            try:
-                event = q.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.1)
-                continue
-            yield f"data: {event.model_dump_json()}\n\n"
-            if event.stage in ("done", "error", "cancelled"):
-                break
-        jobs.events.pop(job_id, None)
+        terminal_consumed = False
+        try:
+            while True:
+                try:
+                    event = q.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.1)
+                    continue
+                terminal_consumed = event.stage in ("done", "error", "cancelled")
+                yield f"data: {event.model_dump_json()}\n\n"
+                if terminal_consumed:
+                    break
+        finally:
+            if terminal_consumed:
+                jobs.events.pop(job_id, None)
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
