@@ -1,5 +1,6 @@
 import asyncio
 import queue
+import threading
 import time
 
 import pytest
@@ -80,6 +81,22 @@ def test_job_record_cancellation_becomes_terminal_after_cleanup():
     record.mark_cancelled()
     assert record.snapshot().status == "cancelled"
     assert record.token.cancelled is True
+
+
+def test_job_record_progress_does_not_clear_cancelling_status():
+    record = JobRecord("job-1")
+    record.request_cancel()
+    late_progress = ProgressEvent(
+        stage="encode",
+        pct=99.0,
+        message="Finishing current encode step",
+    )
+
+    record.update(late_progress)
+
+    snapshot = record.snapshot()
+    assert snapshot.status == "cancelling"
+    assert snapshot.latest == late_progress
 
 
 def test_job_manager_emits_events_and_retains_snapshot():
@@ -187,6 +204,58 @@ def test_job_manager_cancellation_retains_snapshot_and_single_terminal_event(mon
     terminal = [event for event in events if event.stage in TERMINAL_STAGES]
     assert [event.stage for event in terminal] == ["cancelled"]
     assert manager.get_snapshot(job_id).status == "cancelled"
+
+
+def test_cancellation_between_final_checkpoint_and_completion_wins(monkeypatch):
+    manager = JobManager(None)
+    paths = ["/tmp/complete.m4a"]
+    completion_entered = threading.Event()
+    allow_completion = threading.Event()
+    callback_payloads = []
+    original_complete = JobRecord.complete
+
+    def pause_before_completion(self, *args, **kwargs):
+        completion_entered.set()
+        assert allow_completion.wait(timeout=2.0)
+        return original_complete(self, *args, **kwargs)
+
+    class OkResponse:
+        is_success = True
+
+    monkeypatch.setattr(manager, "_process", lambda job_id, req: paths)
+    monkeypatch.setattr(JobRecord, "complete", pause_before_completion)
+    monkeypatch.setattr(
+        main_module.httpx,
+        "post",
+        lambda url, json, timeout: callback_payloads.append(json) or OkResponse(),
+    )
+    request = _request().model_copy(
+        update={"callback_url": "https://n8n.example/resume"}
+    )
+
+    job_id = manager.submit(request)
+    try:
+        assert completion_entered.wait(timeout=2.0)
+        cancelling = manager.request_cancel(job_id)
+        assert cancelling.status == "cancelling"
+    finally:
+        allow_completion.set()
+
+    _wait_for(
+        lambda: manager.get_snapshot(job_id).status in {"completed", "cancelled"}
+    )
+    events = _drain_events(manager, job_id)
+    terminal = [event for event in events if event.stage in TERMINAL_STAGES]
+    snapshot = manager.get_snapshot(job_id)
+    assert snapshot.status == "cancelled"
+    assert snapshot.output_paths == []
+    assert [event.stage for event in terminal] == ["cancelled"]
+    assert callback_payloads == [{
+        "job_id": job_id,
+        "status": "cancelled",
+        "output_paths": [],
+        "error": "",
+    }]
 
 
 def test_progress_disconnect_removes_only_terminal_event_queue(monkeypatch):

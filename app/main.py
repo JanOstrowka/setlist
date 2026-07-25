@@ -93,56 +93,61 @@ class JobManager:
     def request_cancel(self, job_id: str) -> JobSnapshot:
         if job_id not in self.jobs:
             raise KeyError(job_id)
-        record = self.jobs[job_id]
-        record.request_cancel()
-        return record.snapshot()
+        return self.jobs[job_id].request_cancel()
 
     def _emit(self, job_id: str, event: ProgressEvent) -> None:
-        self.jobs[job_id].update(event)
-        self.events[job_id].put(event)
+        if self.jobs[job_id].update(event):
+            self.events[job_id].put(event)
+
+    def _publish_terminal(
+        self,
+        job_id: str,
+        req: "DownloadRequest | SplitDownloadRequest",
+    ) -> None:
+        snapshot = self.jobs[job_id].snapshot()
+        callback_status = {
+            "completed": "done",
+            "failed": "error",
+            "cancelled": "cancelled",
+        }[snapshot.status]
+        self.events[job_id].put(snapshot.latest)
+        self._post_callback(req, {
+            "job_id": job_id,
+            "status": callback_status,
+            "output_paths": snapshot.output_paths,
+            "error": snapshot.error,
+        })
 
     def _run(self) -> None:
         while True:
             job_id, req = self.work.get()
+            record = self.jobs[job_id]
+            transitioned = False
             try:
                 if isinstance(req, SplitDownloadRequest):
                     paths = self._process_split(job_id, req)
                 else:
                     paths = self._process(job_id, req)
-                self.jobs[job_id].token.raise_if_cancelled()
             except JobCancelled:
-                record = self.jobs[job_id]
-                record.mark_cancelled()
-                self._emit(job_id, record.latest)
-                self._post_callback(req, {
-                    "job_id": job_id, "status": "cancelled", "output_paths": [], "error": "",
-                })
+                transitioned = record.mark_cancelled()
             except Exception as exc:  # surface any pipeline failure to the UI
                 message = resolver.augment_error(exc)
-                record = self.jobs[job_id]
-                record.fail(message)
-                self._emit(job_id, record.latest)
-                self._post_callback(req, {
-                    "job_id": job_id, "status": "error", "output_paths": [], "error": message,
-                })
+                transitioned = record.fail(message) is not None
             else:
-                record = self.jobs[job_id]
-                record.complete(paths)
                 if isinstance(req, SplitDownloadRequest):
                     message = f"Saved {len(paths)} tracks"
                     file_path = str(Path(paths[0]).parent) if paths else None
                 else:
                     message = "Saved"
                     file_path = paths[0] if paths else None
-                self._emit(job_id, ProgressEvent(
+                transitioned = record.complete(paths, ProgressEvent(
                     stage="done",
                     pct=100.0,
                     message=message,
                     file_path=file_path,
-                ))
-                self._post_callback(req, {
-                    "job_id": job_id, "status": "done", "output_paths": paths, "error": "",
-                })
+                )) is not None
+            if transitioned:
+                self._publish_terminal(job_id, req)
 
     def _post_callback(self, req: "DownloadRequest | SplitDownloadRequest", payload: dict) -> None:
         """Best-effort POST of a terminal-state summary to the request's callback_url.

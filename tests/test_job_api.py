@@ -50,6 +50,25 @@ def test_cancel_job_is_transient_until_worker_cleanup(job_id):
     assert jobs.events[job_id].empty()
 
 
+@pytest.mark.parametrize("terminal_status", ["completed", "failed", "cancelled"])
+def test_cancel_terminal_job_returns_immutable_snapshot(job_id, terminal_status):
+    record = jobs.jobs[job_id]
+    if terminal_status == "completed":
+        record.complete(["/tmp/finished.m4a"])
+    elif terminal_status == "failed":
+        record.fail("pipeline failed")
+    else:
+        record.request_cancel()
+        record.mark_cancelled()
+    before = record.snapshot().model_dump(mode="json")
+
+    response = TestClient(app).post(f"/jobs/{job_id}/cancel")
+
+    assert response.status_code == 200
+    assert response.json() == before
+    assert jobs.events[job_id].empty()
+
+
 def test_unknown_job_returns_404():
     client = TestClient(app)
 
