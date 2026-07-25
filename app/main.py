@@ -90,6 +90,13 @@ class JobManager:
             raise KeyError(job_id)
         return self.jobs[job_id].snapshot()
 
+    def request_cancel(self, job_id: str) -> JobSnapshot:
+        if job_id not in self.jobs:
+            raise KeyError(job_id)
+        record = self.jobs[job_id]
+        record.request_cancel()
+        return record.snapshot()
+
     def _emit(self, job_id: str, event: ProgressEvent) -> None:
         self.jobs[job_id].update(event)
         self.events[job_id].put(event)
@@ -102,6 +109,7 @@ class JobManager:
                     paths = self._process_split(job_id, req)
                 else:
                     paths = self._process(job_id, req)
+                self.jobs[job_id].token.raise_if_cancelled()
             except JobCancelled:
                 record = self.jobs[job_id]
                 record.mark_cancelled()
@@ -159,22 +167,46 @@ class JobManager:
                 time.sleep(CALLBACK_RETRY_DELAY)
 
     def _process(self, job_id: str, req: DownloadRequest) -> list[str]:
+        token = self.jobs[job_id].token
+        token.raise_if_cancelled()
         with tempfile.TemporaryDirectory(prefix="setlist-") as tmp:
             tmpdir = Path(tmp)
 
             self._emit(job_id, ProgressEvent(stage="download", pct=0.0, message="Starting download"))
+
+            def on_download(progress: downloader.DownloadProgress) -> None:
+                self._emit(job_id, ProgressEvent(
+                    stage="download",
+                    pct=progress.pct,
+                    message="Downloading audio",
+                    downloaded_bytes=progress.downloaded_bytes,
+                    total_bytes=progress.total_bytes,
+                    speed_bytes_per_second=progress.speed_bytes_per_second,
+                    eta_seconds=progress.eta_seconds,
+                ))
+
             src = downloader.download_audio(
                 req.url,
                 tmpdir,
-                lambda pct: self._emit(job_id, ProgressEvent(stage="download", pct=pct, message="Downloading audio")),
+                on_download,
                 self.cfg.pot_provider_url,
+                cancellation=token,
             )
 
             target = "ALAC (lossless)" if req.format == "alac" else "AAC 256 kbps"
             self._emit(job_id, ProgressEvent(stage="encode", pct=0.0, message=f"Encoding to {target}"))
             encoded = tmpdir / "encoded.m4a"
-            downloader.encode(src, encoded, req.format)
-            self._emit(job_id, ProgressEvent(stage="encode", pct=100.0, message="Encoded"))
+            downloader.encode(
+                src,
+                encoded,
+                req.format,
+                on_progress=lambda pct: self._emit(job_id, ProgressEvent(
+                    stage="encode",
+                    pct=pct,
+                    message="Encoded" if pct >= 100.0 else f"Encoding to {target}",
+                )),
+                cancellation=token,
+            )
 
             if req.cover == "keep":
                 cover = resolver.read_cached_cover(req.video_id)
@@ -184,8 +216,10 @@ class JobManager:
                 except Exception:
                     cover = None
 
+            token.raise_if_cancelled()
             self._emit(job_id, ProgressEvent(stage="tag", pct=0.0, message="Writing tags"))
             tagger.write_tags(encoded, req.metadata, cover)
+            token.raise_if_cancelled()
             self._emit(job_id, ProgressEvent(stage="tag", pct=100.0, message="Tags written"))
 
             dest = library.single_track_path(
@@ -196,6 +230,7 @@ class JobManager:
                 req.metadata.title,
                 req.video_id,
             )
+            token.raise_if_cancelled()
             library.save(encoded, dest)
             library.write_cover(dest.parent, cover)
             library.record_recent(self.cfg.output_dir, {
@@ -208,22 +243,46 @@ class JobManager:
             return [str(dest)]
 
     def _process_split(self, job_id: str, req: SplitDownloadRequest) -> list[str]:
+        token = self.jobs[job_id].token
+        token.raise_if_cancelled()
         with tempfile.TemporaryDirectory(prefix="setlist-") as tmp:
             tmpdir = Path(tmp)
 
             self._emit(job_id, ProgressEvent(stage="download", pct=0.0, message="Starting download"))
+
+            def on_download(progress: downloader.DownloadProgress) -> None:
+                self._emit(job_id, ProgressEvent(
+                    stage="download",
+                    pct=progress.pct,
+                    message="Downloading full set",
+                    downloaded_bytes=progress.downloaded_bytes,
+                    total_bytes=progress.total_bytes,
+                    speed_bytes_per_second=progress.speed_bytes_per_second,
+                    eta_seconds=progress.eta_seconds,
+                ))
+
             src = downloader.download_audio(
                 req.url,
                 tmpdir,
-                lambda pct: self._emit(job_id, ProgressEvent(stage="download", pct=pct, message="Downloading full set")),
+                on_download,
                 self.cfg.pot_provider_url,
+                cancellation=token,
             )
 
             target = "ALAC (lossless)" if req.format == "alac" else "AAC 256 kbps"
             self._emit(job_id, ProgressEvent(stage="encode", pct=0.0, message=f"Encoding full set to {target}"))
             full = tmpdir / "full.m4a"
-            downloader.encode(src, full, req.format)
-            self._emit(job_id, ProgressEvent(stage="encode", pct=100.0, message="Encoded"))
+            downloader.encode(
+                src,
+                full,
+                req.format,
+                on_progress=lambda pct: self._emit(job_id, ProgressEvent(
+                    stage="encode",
+                    pct=pct,
+                    message="Encoded" if pct >= 100.0 else f"Encoding full set to {target}",
+                )),
+                cancellation=token,
+            )
 
             if req.cover == "keep":
                 cover = resolver.read_cached_cover(req.video_id)
@@ -233,6 +292,7 @@ class JobManager:
                 except Exception:
                     cover = None
 
+            token.raise_if_cancelled()
             tracks = tracklist.normalize(req.tracks)
             if not tracks:
                 raise RuntimeError("No valid tracks to split")
@@ -240,17 +300,70 @@ class JobManager:
                 raise RuntimeError("Some tracks are missing start times; fill them in before splitting")
 
             total = len(tracks)
-            self._emit(job_id, ProgressEvent(stage="split", pct=0.0, message=f"Splitting into {total} tracks"))
             cut_dir = tmpdir / "cuts"
 
-            def on_track(i: int, n: int, title: str) -> None:
-                self._emit(job_id, ProgressEvent(stage="split", pct=i / n * 100.0, message=f"Cut {i}/{n}: {title or 'Untitled'}"))
+            def emit_split(index: int, pct: float, title: str, message: str) -> None:
+                self._emit(job_id, ProgressEvent(
+                    stage="split",
+                    pct=pct,
+                    message=message,
+                    track_index=index,
+                    track_count=total,
+                    track_title=title,
+                    track_state="cutting",
+                ))
 
-            files = splitter.split_file(full, tracks, cut_dir, on_track=on_track)
+            first_title = tracks[0].title or "Untitled"
+            emit_split(
+                1,
+                0.0,
+                first_title,
+                f"Cutting track 1 of {total}: {first_title}",
+            )
+
+            def on_track(i: int, n: int, title: str) -> None:
+                display_title = title or "Untitled"
+                pct = i / n * 100.0
+                emit_split(i, pct, display_title, f"Cut {i}/{n}: {display_title}")
+                if i < n:
+                    next_title = tracks[i].title or "Untitled"
+                    emit_split(
+                        i + 1,
+                        pct,
+                        next_title,
+                        f"Cutting track {i + 1} of {n}: {next_title}",
+                    )
+
+            files = splitter.split_file(
+                full,
+                tracks,
+                cut_dir,
+                on_track=on_track,
+                cancellation=token,
+            )
 
             self._emit(job_id, ProgressEvent(stage="tag", pct=0.0, message="Tagging album"))
-            tagger.tag_album(files, tracks, req.metadata, cover)
-            self._emit(job_id, ProgressEvent(stage="tag", pct=100.0, message="Tagged"))
+
+            def on_tag(i: int, n: int, title: str) -> None:
+                display_title = title or "Untitled"
+                self._emit(job_id, ProgressEvent(
+                    stage="tag",
+                    pct=i / n * 100.0,
+                    message=f"Tagged {i}/{n}: {display_title}",
+                    track_index=i,
+                    track_count=n,
+                    track_title=display_title,
+                    track_state="tagging",
+                ))
+
+            tagger.tag_album(
+                files,
+                tracks,
+                req.metadata,
+                cover,
+                on_track=on_tag,
+                cancellation=token,
+            )
 
             set_dir = library.set_output_dir(
                 self.cfg.output_dir,
@@ -259,8 +372,10 @@ class JobManager:
                 req.metadata.album,
                 req.metadata.title,
             )
+            token.raise_if_cancelled()
             library.ensure_output_dir(set_dir)
             for f in files:
+                token.raise_if_cancelled()
                 library.save(f, set_dir / f.name)
             library.write_cover(set_dir, cover)
             library.record_recent(self.cfg.output_dir, {
@@ -464,6 +579,22 @@ def resolve_endpoint(req: ResolveRequest) -> ResolveResponse:
 def download_endpoint(req: DownloadRequest) -> dict:
     job_id = jobs.submit(req)
     return {"job_id": job_id}
+
+
+@app.get("/jobs/{job_id}", response_model=JobSnapshot)
+def job_endpoint(job_id: str) -> JobSnapshot:
+    try:
+        return jobs.get_snapshot(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job")
+
+
+@app.post("/jobs/{job_id}/cancel", response_model=JobSnapshot)
+def cancel_job_endpoint(job_id: str) -> JobSnapshot:
+    try:
+        return jobs.request_cancel(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown job")
 
 
 @app.post("/parse-tracklist", response_model=Tracklist)
