@@ -237,7 +237,8 @@ final class WorkflowControllerTests: XCTestCase {
         let api = StubAPI(
             resolve: { url in .fixture(videoID: url) },
             submit: { _ in "job-1" },
-            progress: { _ in .open(probe: streamProbe) }
+            progress: { _ in .open(probe: streamProbe) },
+            cancel: { _ in .cancelled(jobID: "job-1") }
         )
         let history = try makeHistory()
         let controller = WorkflowController(api: api, history: history)
@@ -418,7 +419,8 @@ final class WorkflowControllerTests: XCTestCase {
         let api = StubAPI(
             resolve: { _ in .fixture(videoID: "video") },
             submit: { _ in "job-1" },
-            progress: { _ in .open(probe: streamProbe) }
+            progress: { _ in .open(probe: streamProbe) },
+            cancel: { _ in .cancelled(jobID: "job-1") }
         )
         let history = try makeHistory()
         var controller: WorkflowController? = WorkflowController(
@@ -491,26 +493,216 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertEqual(history.records.first?.outputPaths, ["/tmp/streamed.m4a"])
     }
 
-    func testProgressDisconnectFailsOnlyAfterNonterminalReconciliation() async throws {
+    func testProgressDisconnectPollsNonterminalSnapshotsUntilCompleted() async throws {
+        let snapshots = SnapshotQueue([
+            .queued(jobID: "job-1"),
+            .processing(jobID: "job-1"),
+            .completed(jobID: "job-1", paths: ["/tmp/polled.m4a"]),
+        ])
         let api = StubAPI(
             resolve: { _ in .fixture(videoID: "video") },
             submit: { _ in "job-1" },
             progress: { _ in .failure(StubError.disconnected) },
-            job: { _ in .processing(jobID: "job-1") }
+            job: { _ in try await snapshots.next() }
         )
         let history = try makeHistory()
-        let controller = WorkflowController(api: api, history: history)
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: {}
+        )
         await controller.resolve("source")
 
         await controller.process()
 
         let jobRequests = await api.jobRequestsSnapshot()
-        XCTAssertEqual(jobRequests, ["job-1"])
-        guard case .failed(let failure) = controller.state else {
-            return XCTFail("Expected failure")
+        XCTAssertEqual(jobRequests, ["job-1", "job-1", "job-1"])
+        guard case .completed(let completed) = controller.state else {
+            return XCTFail("Expected polled completion")
         }
-        XCTAssertTrue(failure.message.contains("disconnected"))
-        XCTAssertEqual(history.records.first?.status, .failed)
+        XCTAssertEqual(completed.outputPaths, ["/tmp/polled.m4a"])
+        XCTAssertEqual(history.records.first?.status, .completed)
+    }
+
+    func testCancellationDuringSSECancelsAndPollsBackendToTerminal() async throws {
+        let streamProbe = StreamProbe()
+        let snapshots = SnapshotQueue([
+            .cancelling(jobID: "job-1"),
+            .cancelled(jobID: "job-1"),
+        ])
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) },
+            job: { _ in try await snapshots.next() },
+            cancel: { _ in .cancelling(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: {}
+        )
+        await controller.resolve("source")
+        let processing = Task { await controller.process() }
+        try await waitUntil { await streamProbe.didStart }
+
+        processing.cancel()
+        await processing.value
+
+        let cancelRequests = await api.cancelRequestsSnapshot()
+        XCTAssertEqual(cancelRequests, ["job-1"])
+        let jobRequests = await api.jobRequestsSnapshot()
+        XCTAssertEqual(jobRequests, ["job-1", "job-1"])
+        XCTAssertEqual(history.records.first?.status, .cancelled)
+        XCTAssertEqual(history.records.first?.stage, .cancelled)
+    }
+
+    func testCancellationDuringReconciliationCancelsBackend() async throws {
+        let reconciliationGate = ValueGate<APIJobSnapshot>()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .failure(StubError.disconnected) },
+            job: { _ in
+                try await reconciliationGate.wait(for: "reconcile")
+            },
+            cancel: { _ in .cancelled(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: {}
+        )
+        await controller.resolve("source")
+        let processing = Task { await controller.process() }
+        try await waitUntil {
+            await reconciliationGate.hasWaiter(for: "reconcile")
+        }
+
+        processing.cancel()
+        await reconciliationGate.resume(
+            .success(.processing(jobID: "job-1")),
+            for: "reconcile"
+        )
+        await processing.value
+
+        let cancelRequests = await api.cancelRequestsSnapshot()
+        XCTAssertEqual(cancelRequests, ["job-1"])
+        XCTAssertEqual(history.records.first?.status, .cancelled)
+    }
+
+    func testCancellationWaitsThroughDelayedCancellingSnapshots() async throws {
+        let snapshots = SnapshotQueue([
+            .cancelling(jobID: "job-1"),
+            .cancelling(jobID: "job-1"),
+            .cancelling(jobID: "job-1"),
+            .cancelling(jobID: "job-1"),
+            .cancelled(jobID: "job-1"),
+        ])
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: StreamProbe()) },
+            job: { _ in try await snapshots.next() },
+            cancel: { _ in .cancelling(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: {}
+        )
+        await controller.resolve("source")
+        let processing = Task { await controller.process() }
+        try await waitUntil {
+            !(await api.singleRequestsSnapshot()).isEmpty
+        }
+
+        processing.cancel()
+        await processing.value
+
+        let jobRequests = await api.jobRequestsSnapshot()
+        XCTAssertEqual(jobRequests.count, 5)
+        XCTAssertEqual(history.records.first?.status, .cancelled)
+        XCTAssertNotEqual(history.records.first?.status, .interrupted)
+    }
+
+    func testResolveRemainsBlockedWhileCancellationIsNonterminal() async throws {
+        let cancellationGate = ValueGate<APIJobSnapshot>()
+        let streamProbe = StreamProbe()
+        let api = StubAPI(
+            resolve: { url in .fixture(videoID: url) },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) },
+            job: { _ in
+                try await cancellationGate.wait(for: "cancelling")
+            },
+            cancel: { _ in .cancelled(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: {}
+        )
+        await controller.resolve("original")
+        let processing = Task { await controller.process() }
+        try await waitUntil { await streamProbe.didStart }
+        processing.cancel()
+        try await waitUntil {
+            await cancellationGate.hasWaiter(for: "cancelling")
+        }
+
+        await controller.resolve("replacement")
+
+        guard case .processing = controller.state else {
+            return XCTFail("Expected cancellation reconciliation to stay processing")
+        }
+        XCTAssertEqual(history.records.count, 1)
+        await cancellationGate.resume(
+            .success(.cancelled(jobID: "job-1")),
+            for: "cancelling"
+        )
+        await processing.value
+    }
+
+    func testDroppingControllerCancelsTasksWithoutExplicitShutdown() async throws {
+        let reconciliationGate = ValueGate<APIJobSnapshot>()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .failure(StubError.disconnected) },
+            job: { _ in
+                try await reconciliationGate.wait(for: "delayed-job")
+            },
+            cancel: { _ in .cancelled(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        var controller: WorkflowController? = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: {}
+        )
+        await controller?.resolve("source")
+        weak let weakController = controller
+        controller?.startProcessing()
+        try await waitUntil {
+            await reconciliationGate.hasWaiter(for: "delayed-job")
+        }
+
+        controller = nil
+        try await waitUntil { weakController == nil }
+        await reconciliationGate.resume(
+            .success(.completed(jobID: "job-1", paths: [])),
+            for: "delayed-job"
+        )
+        try await waitUntil {
+            !(await api.cancelRequestsSnapshot()).isEmpty
+        }
+
+        XCTAssertNil(weakController)
     }
 
     func testControllerMarksPersistedActiveRecordsInterruptedOnStartup() throws {
@@ -749,6 +941,14 @@ private extension APITracklist {
 }
 
 private extension APIJobSnapshot {
+    static func queued(jobID: String) -> Self {
+        .init(
+            jobID: jobID,
+            status: .queued,
+            latest: .init(stage: .queued, pct: 0, message: "Queued")
+        )
+    }
+
     static func completed(jobID: String, paths: [String]) -> Self {
         .init(
             jobID: jobID,
@@ -763,6 +963,18 @@ private extension APIJobSnapshot {
             jobID: jobID,
             status: .processing,
             latest: .init(stage: .download, pct: 10, message: "Downloading")
+        )
+    }
+
+    static func cancelling(jobID: String) -> Self {
+        .init(
+            jobID: jobID,
+            status: .cancelling,
+            latest: .init(
+                stage: .cancelled,
+                pct: 50,
+                message: "Cancelling"
+            )
         )
     }
 
