@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from mutagen.mp4 import MP4
 
+from app.core import tagger
+from app.core.job_state import CancellationToken, JobCancelled
 from app.core.tagger import tag_album
 from app.models import MetadataFields, Track
 
@@ -71,3 +73,33 @@ def test_tag_album_track_artist_falls_back_to_album_artist(three_m4a):
     tag_album(three_m4a, tracks, album)
     for f in three_m4a:
         assert MP4(str(f))["\xa9ART"] == ["DJ X"]
+
+
+def test_tag_album_reports_tracks_and_checks_cancellation(monkeypatch, tmp_path):
+    files = [tmp_path / "one.m4a", tmp_path / "two.m4a"]
+    tracks = [Track(start=0, title="One"), Track(start=10, title="Two")]
+    album = MetadataFields(album="Live Set", album_artist="DJ X")
+    writes = []
+    events = []
+    token = CancellationToken()
+
+    def fake_write_tags(path, *args, **kwargs):
+        writes.append(path)
+
+    def on_track(index, total, title):
+        events.append((index, total, title))
+        token.cancel()
+
+    monkeypatch.setattr(tagger, "write_tags", fake_write_tags)
+
+    with pytest.raises(JobCancelled):
+        tag_album(
+            files,
+            tracks,
+            album,
+            on_track=on_track,
+            cancellation=token,
+        )
+
+    assert writes == [files[0]]
+    assert events == [(1, 2, "One")]

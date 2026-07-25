@@ -4,10 +4,12 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 from mutagen.mp4 import MP4, MP4Cover
 
 from ..models import MetadataFields, Track
+from .job_state import CancellationToken
 
 
 def write_tags(
@@ -58,6 +60,8 @@ def tag_album(
     tracks: list[Track],
     album_meta: MetadataFields,
     cover_jpeg: bytes | None = None,
+    on_track: Callable[[int, int, str], None] | None = None,
+    cancellation: CancellationToken | None = None,
 ) -> None:
     """Tag a set of cut files as ONE cohesive gapless album.
 
@@ -70,12 +74,16 @@ def tag_album(
     distinct_artists = {(t.artist or "").strip() for t in tracks if (t.artist or "").strip()}
     various = len(distinct_artists) > 1
     for i, (path, track) in enumerate(zip(files, tracks), start=1):
+        if cancellation:
+            cancellation.raise_if_cancelled()
         per_track = album_meta.model_copy(update={
             "title": track.title or album_meta.title or f"Track {i}",
             "artist": track.artist or album_meta.album_artist or album_meta.artist,
             "compilation": various or album_meta.compilation,
         })
         write_tags(path, per_track, cover_jpeg, track=(i, total), disc=(1, 1))
+        if on_track:
+            on_track(i, total, track.title)
 
 
 def _embed_cover_atomicparsley(path: Path, cover_jpeg: bytes) -> None:

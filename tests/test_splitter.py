@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from mutagen.mp4 import MP4
 
+from app.core import splitter
+from app.core.job_state import CancellationToken, JobCancelled
 from app.core.splitter import compute_end_times, split_file
 from app.models import Track
 
@@ -65,3 +67,32 @@ def test_split_file_rejects_missing_start(long_m4a, tmp_path):
     tracks = [Track(start=0, title="A"), Track(start=None, title="B")]
     with pytest.raises(ValueError):
         split_file(long_m4a, tracks, tmp_path / "cuts", total_duration=6.0)
+
+
+def test_split_file_checks_cancellation_before_each_cut(monkeypatch, tmp_path):
+    tracks = [Track(start=0, title="A"), Track(start=2, title="B")]
+    cuts = []
+    events = []
+    token = CancellationToken()
+
+    def fake_cut(full, start, end, dest):
+        cuts.append(dest.name)
+
+    def on_track(index, total, title):
+        events.append((index, total, title))
+        token.cancel()
+
+    monkeypatch.setattr(splitter, "_cut", fake_cut)
+
+    with pytest.raises(JobCancelled):
+        split_file(
+            tmp_path / "full.m4a",
+            tracks,
+            tmp_path / "cuts",
+            total_duration=4.0,
+            on_track=on_track,
+            cancellation=token,
+        )
+
+    assert cuts == ["01 - A.m4a"]
+    assert events == [(1, 2, "A")]

@@ -23,3 +23,14 @@ def test_encode_limit_seconds_truncates(m4a_file, tmp_path):
     encode(m4a_file, dest, "alac", limit_seconds=0.5)
     assert dest.exists() and dest.stat().st_size > 0
     assert MP4(str(dest)).info.length <= 0.75
+
+
+def test_encode_reports_machine_readable_progress(m4a_file, tmp_path):
+    dest = tmp_path / "out_progress.m4a"
+    progress = []
+
+    encode(m4a_file, dest, "alac", on_progress=progress.append)
+
+    assert progress
+    assert progress[-1] == 100.0
+    assert all(0.0 <= pct <= 100.0 for pct in progress)

@@ -8,6 +8,7 @@ from mutagen.mp4 import MP4
 
 from ..models import Track
 from . import library
+from .job_state import CancellationToken
 
 
 def _probe_duration(path: Path | str) -> float:
@@ -48,6 +49,7 @@ def split_file(
     out_dir: Path | str,
     total_duration: Optional[float] = None,
     on_track: Optional[Callable[[int, int, str], None]] = None,
+    cancellation: CancellationToken | None = None,
 ) -> list[Path]:
     """Cut `full` into per-track .m4a files in `out_dir` named 'NN - Title.m4a'.
 
@@ -67,6 +69,8 @@ def split_file(
     total = len(timed)
     for i, t in enumerate(timed, start=1):
         dest = out / library.track_filename(i, t.title)
+        if cancellation:
+            cancellation.raise_if_cancelled()
         _cut(full, float(t.start), float(t.end), dest)
         files.append(dest)
         if on_track:
