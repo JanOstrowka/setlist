@@ -30,8 +30,10 @@ from .core import (
     tracklist,
     tracklist_1001,
 )
+from .core.job_state import JobCancelled, JobRecord
 from .models import (
     DownloadRequest,
+    JobSnapshot,
     ProgressEvent,
     ResolveRequest,
     ResolveResponse,
@@ -64,25 +66,33 @@ class JobManager:
 
     def __init__(self, config) -> None:
         self.cfg = config
-        self.jobs: dict[str, "queue.Queue[ProgressEvent]"] = {}
+        self.jobs: dict[str, JobRecord] = {}
+        self.events: dict[str, "queue.Queue[ProgressEvent]"] = {}
         self.work: "queue.Queue[tuple[str, DownloadRequest]]" = queue.Queue()
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
     def submit(self, req: "DownloadRequest | SplitDownloadRequest") -> str:
         job_id = uuid4().hex
-        self.jobs[job_id] = queue.Queue()
+        self.jobs[job_id] = JobRecord(job_id)
+        self.events[job_id] = queue.Queue()
         self._emit(job_id, ProgressEvent(stage="queued", pct=0.0, message="Queued"))
         self.work.put((job_id, req))
         return job_id
 
     def get_queue(self, job_id: str) -> "queue.Queue[ProgressEvent]":
+        if job_id not in self.events:
+            raise KeyError(job_id)
+        return self.events[job_id]
+
+    def get_snapshot(self, job_id: str) -> JobSnapshot:
         if job_id not in self.jobs:
             raise KeyError(job_id)
-        return self.jobs[job_id]
+        return self.jobs[job_id].snapshot()
 
     def _emit(self, job_id: str, event: ProgressEvent) -> None:
-        self.jobs[job_id].put(event)
+        self.jobs[job_id].update(event)
+        self.events[job_id].put(event)
 
     def _run(self) -> None:
         while True:
@@ -92,13 +102,23 @@ class JobManager:
                     paths = self._process_split(job_id, req)
                 else:
                     paths = self._process(job_id, req)
+            except JobCancelled:
+                record = self.jobs[job_id]
+                record.mark_cancelled()
+                self._emit(job_id, record.latest)
+                self._post_callback(req, {
+                    "job_id": job_id, "status": "cancelled", "output_paths": [], "error": "",
+                })
             except Exception as exc:  # surface any pipeline failure to the UI
                 message = resolver.augment_error(exc)
-                self._emit(job_id, ProgressEvent(stage="error", pct=0.0, message=message))
+                record = self.jobs[job_id]
+                record.fail(message)
+                self._emit(job_id, record.latest)
                 self._post_callback(req, {
                     "job_id": job_id, "status": "error", "output_paths": [], "error": message,
                 })
             else:
+                self.jobs[job_id].complete(paths)
                 self._post_callback(req, {
                     "job_id": job_id, "status": "done", "output_paths": paths, "error": "",
                 })
@@ -488,9 +508,9 @@ async def progress_endpoint(job_id: str) -> StreamingResponse:
                 await asyncio.sleep(0.1)
                 continue
             yield f"data: {event.model_dump_json()}\n\n"
-            if event.stage in ("done", "error"):
+            if event.stage in ("done", "error", "cancelled"):
                 break
-        jobs.jobs.pop(job_id, None)
+        jobs.events.pop(job_id, None)
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
