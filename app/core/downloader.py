@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import subprocess
 import threading
 from collections import deque
@@ -9,7 +10,11 @@ from typing import Callable, Optional
 
 from yt_dlp import YoutubeDL
 
-from .job_state import CancellationToken, JobCancelled
+from .job_state import CancellationToken
+
+
+_PROCESS_STOP_TIMEOUT_SECONDS = 5.0
+_STDERR_JOIN_TIMEOUT_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -47,7 +52,52 @@ def probe_duration(path: Path | str) -> float:
         capture_output=True,
         text=True,
     )
-    return float(proc.stdout.strip())
+    duration = float(proc.stdout.strip())
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError(f"Invalid media duration: {duration}")
+    return duration
+
+
+def _finish_stderr_thread(
+    stderr_thread: threading.Thread,
+    stderr_stop: threading.Event,
+) -> None:
+    stderr_thread.join(timeout=_STDERR_JOIN_TIMEOUT_SECONDS)
+    stderr_stop.set()
+    if stderr_thread.is_alive():
+        stderr_thread.join(timeout=_STDERR_JOIN_TIMEOUT_SECONDS)
+
+
+def _stop_ffmpeg(
+    proc: subprocess.Popen,
+    stderr_thread: threading.Thread,
+    stderr_stop: threading.Event,
+) -> None:
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+
+    try:
+        proc.wait(timeout=_PROCESS_STOP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=_PROCESS_STOP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            pass
+    except Exception:
+        pass
+    finally:
+        try:
+            _finish_stderr_thread(stderr_thread, stderr_stop)
+        except Exception:
+            pass
 
 
 def download_audio(
@@ -135,7 +185,13 @@ def encode(
     else:
         codec_args = ["-c:a", "alac"]
     duration_args = ["-t", str(limit_seconds)] if limit_seconds else []
-    duration_seconds = probe_duration(src)
+    try:
+        duration_seconds = probe_duration(src)
+        if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+            raise ValueError(f"Invalid media duration: {duration_seconds}")
+    except (subprocess.SubprocessError, OSError, ValueError) as exc:
+        detail = getattr(exc, "stderr", None) or str(exc) or "could not determine input duration"
+        raise RuntimeError(f"ffmpeg encode failed: {str(detail).strip()}") from exc
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
         *duration_args,
@@ -154,9 +210,13 @@ def encode(
     assert proc.stderr is not None
 
     stderr_tail: deque[str] = deque(maxlen=100)
+    stderr_stop = threading.Event()
 
     def drain_stderr() -> None:
-        for line in proc.stderr:
+        while not stderr_stop.is_set():
+            line = proc.stderr.readline()
+            if not line:
+                break
             stderr_tail.append(line)
 
     stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
@@ -175,14 +235,12 @@ def encode(
                 cancellation.raise_if_cancelled()
         if cancellation:
             cancellation.raise_if_cancelled()
-    except JobCancelled:
-        proc.terminate()
-        proc.wait()
-        stderr_thread.join()
+    except BaseException:
+        _stop_ffmpeg(proc, stderr_thread, stderr_stop)
         raise
 
     returncode = proc.wait()
-    stderr_thread.join()
+    _finish_stderr_thread(stderr_thread, stderr_stop)
     if returncode != 0:
         error = "".join(stderr_tail).strip()
         raise RuntimeError(f"ffmpeg encode failed: {error[-300:]}")

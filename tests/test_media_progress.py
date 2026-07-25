@@ -1,10 +1,37 @@
 from io import StringIO
+import subprocess
+import threading
 
 import pytest
 
 from app.core import downloader
 from app.core.downloader import DownloadProgress, download_audio, encode, parse_ffmpeg_progress
 from app.core.job_state import CancellationToken, JobCancelled
+
+
+class FakeProcess:
+    def __init__(self, stdout="", wait_results=None):
+        self.stdout = StringIO(stdout)
+        self.stderr = StringIO()
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+        self.wait_results = list(wait_results or [0])
+        self.wait_timeouts = []
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        self.wait_timeouts.append(timeout)
+        result = self.wait_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        self.returncode = result
+        return result
 
 
 def test_download_progress_from_yt_dlp_payload():
@@ -104,21 +131,10 @@ def test_download_audio_checks_cancellation_before_publishing(monkeypatch, tmp_p
 
 
 def test_encode_terminates_ffmpeg_when_cancelled(monkeypatch, tmp_path):
-    class FakeProcess:
-        def __init__(self):
-            self.stdout = StringIO("out_time_us=1000000\nout_time_us=2000000\n")
-            self.stderr = StringIO()
-            self.returncode = None
-            self.terminated = False
-
-        def terminate(self):
-            self.terminated = True
-
-        def wait(self):
-            self.returncode = -15
-            return self.returncode
-
-    process = FakeProcess()
+    process = FakeProcess(
+        "out_time_us=1000000\nout_time_us=2000000\n",
+        wait_results=[-15],
+    )
     command = []
     monkeypatch.setattr(downloader, "probe_duration", lambda path: 10.0)
 
@@ -148,3 +164,156 @@ def test_encode_terminates_ffmpeg_when_cancelled(monkeypatch, tmp_path):
     assert command[command.index("-loglevel") + 1] == "error"
     assert command[command.index("-progress") + 1] == "pipe:1"
     assert "-nostats" in command
+
+
+def test_encode_kills_ffmpeg_when_terminate_times_out(monkeypatch, tmp_path):
+    process = FakeProcess(
+        "out_time_us=1000000\nout_time_us=2000000\n",
+        wait_results=[
+            subprocess.TimeoutExpired("ffmpeg", 1),
+            -9,
+        ],
+    )
+    joins = []
+    real_thread = threading.Thread
+
+    class TrackingThread(real_thread):
+        def join(self, timeout=None):
+            joins.append(timeout)
+            return super().join(timeout)
+
+    monkeypatch.setattr(downloader, "probe_duration", lambda path: 10.0)
+    monkeypatch.setattr(downloader.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(downloader.threading, "Thread", TrackingThread)
+    token = CancellationToken()
+
+    def cancel_after_progress(pct):
+        token.cancel()
+
+    with pytest.raises(JobCancelled):
+        encode(
+            tmp_path / "source.m4a",
+            tmp_path / "dest.m4a",
+            "alac",
+            on_progress=cancel_after_progress,
+            cancellation=token,
+        )
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert len(process.wait_timeouts) == 2
+    assert all(timeout is not None and timeout > 0 for timeout in process.wait_timeouts)
+    assert joins and all(timeout is not None and timeout > 0 for timeout in joins)
+
+
+def test_encode_cleans_up_when_progress_callback_raises(monkeypatch, tmp_path):
+    process = FakeProcess("out_time_us=1000000\n", wait_results=[-15])
+    joins = []
+    real_thread = threading.Thread
+
+    class TrackingThread(real_thread):
+        def join(self, timeout=None):
+            joins.append(timeout)
+            return super().join(timeout)
+
+    monkeypatch.setattr(downloader, "probe_duration", lambda path: 10.0)
+    monkeypatch.setattr(downloader.subprocess, "Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(downloader.threading, "Thread", TrackingThread)
+
+    def fail_on_progress(pct):
+        raise LookupError("progress callback failed")
+
+    with pytest.raises(LookupError, match="progress callback failed"):
+        encode(
+            tmp_path / "source.m4a",
+            tmp_path / "dest.m4a",
+            "alac",
+            on_progress=fail_on_progress,
+        )
+
+    assert process.terminated is True
+    assert process.killed is False
+    assert process.wait_timeouts and process.wait_timeouts[0] is not None
+    assert joins and joins[0] is not None
+
+
+def test_encode_cleans_up_when_progress_line_is_malformed(monkeypatch, tmp_path):
+    process = FakeProcess("out_time_us=not-a-number\n", wait_results=[-15])
+    monkeypatch.setattr(downloader, "probe_duration", lambda path: 10.0)
+    monkeypatch.setattr(downloader.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    with pytest.raises(ValueError):
+        encode(
+            tmp_path / "source.m4a",
+            tmp_path / "dest.m4a",
+            "alac",
+        )
+
+    assert process.terminated is True
+    assert process.wait_timeouts and process.wait_timeouts[0] is not None
+
+
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        subprocess.CalledProcessError(
+            1,
+            ["ffprobe"],
+            stderr="invalid media",
+        ),
+        ValueError("could not convert string to float: ''"),
+    ],
+)
+def test_encode_maps_probe_failures_to_encode_error(monkeypatch, tmp_path, probe_error):
+    monkeypatch.setattr(downloader, "probe_duration", lambda path: (_ for _ in ()).throw(probe_error))
+    popen_called = False
+
+    def fake_popen(*args, **kwargs):
+        nonlocal popen_called
+        popen_called = True
+
+    monkeypatch.setattr(downloader.subprocess, "Popen", fake_popen)
+
+    with pytest.raises(RuntimeError, match=r"^ffmpeg encode failed:"):
+        encode(
+            tmp_path / "source.m4a",
+            tmp_path / "dest.m4a",
+            "alac",
+        )
+
+    assert popen_called is False
+
+
+@pytest.mark.parametrize("duration", [0.0, float("nan")])
+def test_encode_rejects_invalid_probe_duration(monkeypatch, tmp_path, duration):
+    monkeypatch.setattr(downloader, "probe_duration", lambda path: duration)
+    monkeypatch.setattr(
+        downloader.subprocess,
+        "Popen",
+        lambda *args, **kwargs: pytest.fail("ffmpeg must not start"),
+    )
+
+    with pytest.raises(RuntimeError, match=r"^ffmpeg encode failed:"):
+        encode(
+            tmp_path / "source.m4a",
+            tmp_path / "dest.m4a",
+            "alac",
+        )
+
+
+def test_encode_preserves_successful_progress(monkeypatch, tmp_path):
+    process = FakeProcess("out_time_us=1000000\nprogress=end\n", wait_results=[0])
+    monkeypatch.setattr(downloader, "probe_duration", lambda path: 10.0)
+    monkeypatch.setattr(downloader.subprocess, "Popen", lambda *args, **kwargs: process)
+    events = []
+
+    encode(
+        tmp_path / "source.m4a",
+        tmp_path / "dest.m4a",
+        "alac",
+        on_progress=events.append,
+    )
+
+    assert events == [10.0, 100.0]
+    assert process.terminated is False
+    assert process.killed is False
