@@ -8,6 +8,8 @@ drag into Apple Music. Files-only: nothing is auto-imported.
 Three ways to use it (all end with files in `~/Music` on your Mac):
 
 - **Local**: `./run.sh` → <http://127.0.0.1:8765> (loopback only, no config needed).
+- **Mac menu bar app**: `./scripts/build_macos_app.sh`, then open `dist/Setlist.app`.
+  It starts the same local backend and presents the existing UI in a native window.
 - **Hosted site**: <https://list-setlist.vercel.app> — the same UI served from Vercel,
   talking to the local helper directly, optionally routing jobs through n8n for an
   audit trail. See `docs/hosted-site.md`.
@@ -23,6 +25,7 @@ Three ways to use it (all end with files in `~/Music` on your Mac):
 - macOS, Python 3.11+
 - **ffmpeg** (required): `brew install ffmpeg`
 - **AtomicParsley** (optional cover fallback): `brew install atomicparsley`
+- Xcode Command Line Tools (only required to build the menu bar app)
 
 ## Setup
 
@@ -32,6 +35,24 @@ cp .env.example .env   # then edit .env and add your keys
 ```
 
 `run.sh` starts the server on `http://127.0.0.1:8765` (loopback only) and opens your browser.
+
+### Mac menu bar app
+
+Build and open the native wrapper:
+
+```bash
+./scripts/build_macos_app.sh
+open dist/Setlist.app
+```
+
+The app lives in the menu bar, opens Setlist in a native WebKit window, and starts
+`run.sh` without opening a browser. If the server or login helper is already running,
+the app attaches to it instead of starting a duplicate. On quit, it only stops a server
+process that it started itself.
+
+This first local build intentionally keeps the Python backend in the source checkout;
+rebuild the app after moving the repository. A later distribution build can bundle the
+backend, ffmpeg, signing, and notarization into a portable `.app`.
 
 To run it automatically at login instead (the "helper" behind the hosted site):
 
@@ -69,6 +90,7 @@ consistent `aART`, `trkn=(1,1)`, and `pgap=1` (gapless) so files import cleanly.
 ```bash
 pip install -e ".[dev]"
 pytest -q                 # unit tests (ffmpeg-dependent ones skip if ffmpeg is missing)
+swift test --package-path macos  # native menu bar wrapper tests
 RUN_SMOKE=1 pytest tests/test_smoke.py -v   # optional end-to-end network test
 ```
 

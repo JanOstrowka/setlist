@@ -1,0 +1,12 @@
+{
+  "": {
+    "swift-dependencies": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/debug/SetlistMacPackageTests.build/primary.swiftdeps"
+  },
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/debug/SetlistMacPackageTests.derived/runner.swift": {
+    "dependencies": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/debug/SetlistMacPackageTests.build/runner.d",
+    "object": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/debug/SetlistMacPackageTests.build/runner.swift.o",
+    "swiftmodule": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/debug/SetlistMacPackageTests.build/runner~partial.swiftmodule",
+    "swift-dependencies": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/debug/SetlistMacPackageTests.build/runner.swiftdeps",
+    "diagnostics": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/debug/SetlistMacPackageTests.build/runner.dia"
+  }
+}

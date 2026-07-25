@@ -17,7 +17,9 @@ pip install -q -e . >/dev/null
 PORT="$(sed -n 's/^[[:space:]]*PORT[[:space:]]*=[[:space:]]*//p' .env 2>/dev/null | tail -n1 | tr -d '"' | tr -d '[:space:]')"
 PORT="${PORT:-8765}"
 
-# Open the browser shortly after the server starts.
-( sleep 1.5; open "http://127.0.0.1:${PORT}" >/dev/null 2>&1 || true ) &
+# The native wrapper supplies its own window.
+if [ "${OPEN_BROWSER:-1}" = "1" ]; then
+  ( sleep 1.5; open "http://127.0.0.1:${PORT}" >/dev/null 2>&1 || true ) &
+fi
 
 exec uvicorn app.main:app --host 127.0.0.1 --port "${PORT}"

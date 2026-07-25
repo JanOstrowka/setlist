@@ -1,0 +1,13 @@
+{
+  "": {
+    "dependencies": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/SetlistMacPackageTests.d",
+    "object": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/SetlistMacPackageTests.o",
+    "swift-dependencies": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/primary.swiftdeps"
+  },
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.derived/runner.swift": {
+    "object": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner.swift.o",
+    "swiftmodule": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner~partial.swiftmodule",
+    "swift-dependencies": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner.swiftdeps",
+    "diagnostics": "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner.dia"
+  }
+}

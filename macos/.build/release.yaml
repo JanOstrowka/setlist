@@ -1,0 +1,131 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "PackageStructure": ["<PackageStructure>"]
+  "SetlistMac-arm64-apple-macosx-release.exe": ["<SetlistMac-arm64-apple-macosx-release.exe>"]
+  "SetlistMac-arm64-apple-macosx-release.module": ["<SetlistMac-arm64-apple-macosx-release.module>"]
+  "SetlistMacPackageTests-arm64-apple-macosx-release.module": ["<SetlistMacPackageTests-arm64-apple-macosx-release.module>"]
+  "SetlistMacPackageTests-arm64-apple-macosx-release.test": ["<SetlistMacPackageTests-arm64-apple-macosx-release.test>"]
+  "SetlistMacTests-arm64-apple-macosx-release.module": ["<SetlistMacTests-arm64-apple-macosx-release.module>"]
+  "main": ["<SetlistMac-arm64-apple-macosx-release.exe>","<SetlistMac-arm64-apple-macosx-release.module>"]
+  "test": ["<SetlistMac-arm64-apple-macosx-release.exe>","<SetlistMac-arm64-apple-macosx-release.module>","<SetlistMacPackageTests-arm64-apple-macosx-release.test>","<SetlistMacTests-arm64-apple-macosx-release.module>"]
+default: "main"
+nodes:
+  "/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+  "/Users/jan/code/work/builds/yt-m-automation/macos/Tests/SetlistMacTests/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+commands:
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/BackendConfiguration.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/BackendController.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/SetlistMacApp.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/WebView.swift"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/sources"]
+    description: "Write auxiliary file /Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/sources"
+
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendConfiguration.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendController.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/SetlistMacApp.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/WebView.swift.o"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.product/Objects.LinkFileList"
+
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.derived/runner.swift"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/sources"]
+    description: "Write auxiliary file /Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/sources"
+
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.derived/runner.swift":
+    tool: test-entry-point-tool
+    inputs: []
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.derived/runner.swift"]
+
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendConfiguration.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendController.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/SetlistMacApp.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/WebView.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendConfigurationTests.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendControllerTests.swift.o"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.product/Objects.LinkFileList"
+
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/jan/code/work/builds/yt-m-automation/macos/Tests/SetlistMacTests/BackendConfigurationTests.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Tests/SetlistMacTests/BackendControllerTests.swift"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/sources"]
+    description: "Write auxiliary file /Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/sources"
+
+  "/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+
+  "<SetlistMac-arm64-apple-macosx-release.exe>":
+    tool: phony
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac"]
+    outputs: ["<SetlistMac-arm64-apple-macosx-release.exe>"]
+
+  "<SetlistMac-arm64-apple-macosx-release.module>":
+    tool: phony
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendConfiguration.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendController.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/SetlistMacApp.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/WebView.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMac.swiftmodule"]
+    outputs: ["<SetlistMac-arm64-apple-macosx-release.module>"]
+
+  "<SetlistMacPackageTests-arm64-apple-macosx-release.module>":
+    tool: phony
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMacPackageTests.swiftmodule"]
+    outputs: ["<SetlistMacPackageTests-arm64-apple-macosx-release.module>"]
+
+  "<SetlistMacPackageTests-arm64-apple-macosx-release.test>":
+    tool: phony
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.xctest/Contents/MacOS/SetlistMacPackageTests"]
+    outputs: ["<SetlistMacPackageTests-arm64-apple-macosx-release.test>"]
+
+  "<SetlistMacTests-arm64-apple-macosx-release.module>":
+    tool: phony
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendConfigurationTests.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendControllerTests.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMacTests.swiftmodule"]
+    outputs: ["<SetlistMacTests-arm64-apple-macosx-release.module>"]
+
+  "C.SetlistMac-arm64-apple-macosx-release.exe":
+    tool: shell
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendConfiguration.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendController.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/SetlistMacApp.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/WebView.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.product/Objects.LinkFileList"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac"]
+    description: "Linking ./.build/arm64-apple-macosx/release/SetlistMac"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release","-o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac","-module-name","SetlistMac","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-dead_strip","-Xlinker","-alias","-Xlinker","_SetlistMac_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+
+  "C.SetlistMac-arm64-apple-macosx-release.module":
+    tool: shell
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/BackendConfiguration.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/BackendController.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/SetlistMacApp.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/WebView.swift","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/sources"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendConfiguration.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendController.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/SetlistMacApp.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/WebView.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMac.swiftmodule"]
+    description: "Compiling Swift Module 'SetlistMac' (4 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","SetlistMac","-emit-dependencies","-emit-module","-emit-module-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMac.swiftmodule","-output-file-map","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/output-file-map.json","-whole-module-optimization","-num-threads","10","-c","@/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/sources","-I","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx13.0","-whole-module-optimization","-num-threads","10","-serialize-diagnostics","-O","-j10","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","SetlistMac_main","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","macos"]
+
+  "C.SetlistMacPackageTests-arm64-apple-macosx-release.module":
+    tool: shell
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.derived/runner.swift","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMacTests.swiftmodule","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/sources"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMacPackageTests.swiftmodule"]
+    description: "Compiling Swift Module 'SetlistMacPackageTests' (1 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","SetlistMacPackageTests","-emit-dependencies","-emit-module","-emit-module-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMacPackageTests.swiftmodule","-output-file-map","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/output-file-map.json","-parse-as-library","-whole-module-optimization","-num-threads","10","-c","@/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/sources","-I","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx13.0","-whole-module-optimization","-num-threads","10","-serialize-diagnostics","-O","-enable-testing","-Xfrontend","-enable-cross-import-overlays","-j10","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-parse-as-library","-emit-objc-header","-emit-objc-header-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/include/SetlistMacPackageTests-Swift.h","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","macos"]
+
+  "C.SetlistMacPackageTests-arm64-apple-macosx-release.test":
+    tool: shell
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendConfiguration.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/BackendController.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/SetlistMacApp.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac.build/WebView.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.build/runner.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendConfigurationTests.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendControllerTests.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.product/Objects.LinkFileList"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.xctest/Contents/MacOS/SetlistMacPackageTests"]
+    description: "Linking ./.build/arm64-apple-macosx/release/SetlistMacPackageTests.xctest/Contents/MacOS/SetlistMacPackageTests"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release","-o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.xctest/Contents/MacOS/SetlistMacPackageTests","-module-name","SetlistMacPackageTests","-Xlinker","-no_warn_duplicate_libraries","-Xlinker","-bundle","-Xlinker","-dead_strip","-Xlinker","-rpath","-Xlinker","@loader_path/../../../","@/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacPackageTests.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx14.0","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+
+  "C.SetlistMacTests-arm64-apple-macosx-release.module":
+    tool: shell
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/Tests/SetlistMacTests/BackendConfigurationTests.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Tests/SetlistMacTests/BackendControllerTests.swift","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMac","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/sources"]
+    outputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendConfigurationTests.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/BackendControllerTests.swift.o","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMacTests.swiftmodule"]
+    description: "Compiling Swift Module 'SetlistMacTests' (2 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","SetlistMacTests","-emit-dependencies","-emit-module","-emit-module-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules/SetlistMacTests.swiftmodule","-output-file-map","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/output-file-map.json","-parse-as-library","-whole-module-optimization","-num-threads","10","-c","@/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/SetlistMacTests.build/sources","-I","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx14.0","-whole-module-optimization","-num-threads","10","-serialize-diagnostics","-index-store-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/index/store","-O","-enable-testing","-Xfrontend","-enable-cross-import-overlays","-j10","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/jan/code/work/builds/yt-m-automation/macos/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-parse-as-library","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","macos"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/jan/code/work/builds/yt-m-automation/macos/Sources/SetlistMac/","/Users/jan/code/work/builds/yt-m-automation/macos/Tests/SetlistMacTests/","/Users/jan/code/work/builds/yt-m-automation/macos/Package.swift","/Users/jan/code/work/builds/yt-m-automation/macos/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

@@ -18,6 +18,7 @@ venv/
 # Build artifacts
 dist/
 build/
+.worktrees/
 
 # Node
 node_modules/
