@@ -7,7 +7,13 @@ import pytest
 from app import main as main_module
 from app.core.job_state import CancellationToken, JobCancelled, JobRecord
 from app.main import JobManager, progress_endpoint
-from app.models import DownloadRequest, MetadataFields, ProgressEvent
+from app.models import (
+    DownloadRequest,
+    MetadataFields,
+    ProgressEvent,
+    SplitDownloadRequest,
+    Track,
+)
 
 
 TERMINAL_STAGES = {"done", "error", "cancelled"}
@@ -18,6 +24,18 @@ def _request() -> DownloadRequest:
         video_id="video-1",
         url="https://example.com/video",
         metadata=MetadataFields(title="Test"),
+    )
+
+
+def _split_request() -> SplitDownloadRequest:
+    return SplitDownloadRequest(
+        video_id="video-1",
+        url="https://example.com/video",
+        metadata=MetadataFields(title="Test"),
+        tracks=[
+            Track(start=0.0, title="First"),
+            Track(start=60.0, title="Second"),
+        ],
     )
 
 
@@ -92,6 +110,51 @@ def test_job_manager_completes_snapshot_before_single_terminal_event(monkeypatch
     snapshot = manager.get_snapshot(job_id)
     assert snapshot.status == "completed"
     assert snapshot.output_paths == paths
+
+
+@pytest.mark.parametrize(
+    ("job_request", "process_method", "paths", "expected_file_path", "expected_message"),
+    [
+        (
+            _request(),
+            "_process",
+            ["/tmp/complete.m4a"],
+            "/tmp/complete.m4a",
+            "Saved",
+        ),
+        (
+            _split_request(),
+            "_process_split",
+            ["/tmp/set/01.m4a", "/tmp/set/02.m4a"],
+            "/tmp/set",
+            "Saved 2 tracks",
+        ),
+    ],
+)
+def test_job_manager_done_event_preserves_reveal_path(
+    monkeypatch,
+    job_request,
+    process_method,
+    paths,
+    expected_file_path,
+    expected_message,
+):
+    manager = JobManager(None)
+    monkeypatch.setattr(manager, process_method, lambda job_id, req: paths)
+
+    job_id = manager.submit(job_request)
+    _wait_for(lambda: manager.get_queue(job_id).qsize() == 2)
+
+    snapshot = manager.get_snapshot(job_id)
+    terminal = [
+        event
+        for event in _drain_events(manager, job_id)
+        if event.stage in TERMINAL_STAGES
+    ]
+    assert snapshot.status == "completed"
+    assert len(terminal) == 1
+    assert terminal[0].file_path == expected_file_path
+    assert terminal[0].message == expected_message
 
 
 def test_job_manager_failure_retains_snapshot_and_single_terminal_event(monkeypatch):

@@ -120,7 +120,18 @@ class JobManager:
             else:
                 record = self.jobs[job_id]
                 record.complete(paths)
-                self._emit(job_id, record.latest)
+                if isinstance(req, SplitDownloadRequest):
+                    message = f"Saved {len(paths)} tracks"
+                    file_path = str(Path(paths[0]).parent) if paths else None
+                else:
+                    message = "Saved"
+                    file_path = paths[0] if paths else None
+                self._emit(job_id, ProgressEvent(
+                    stage="done",
+                    pct=100.0,
+                    message=message,
+                    file_path=file_path,
+                ))
                 self._post_callback(req, {
                     "job_id": job_id, "status": "done", "output_paths": paths, "error": "",
                 })
