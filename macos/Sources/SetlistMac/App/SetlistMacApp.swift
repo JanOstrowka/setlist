@@ -29,7 +29,7 @@ final class SetlistAppEnvironment {
 
     static func live() throws -> SetlistAppEnvironment {
         let backend = BackendController.shared
-        let modelContainer = try ModelContainer(for: HistoryRecord.self)
+        let modelContainer = try makeHistoryContainer()
         let history = try HistoryStore(modelContext: modelContainer.mainContext)
         let api = SetlistAPI(baseURL: backend.configuration.baseURL)
         let workflow = WorkflowController(api: api, history: history)
@@ -39,6 +39,43 @@ final class SetlistAppEnvironment {
             history: history,
             workflow: workflow
         )
+    }
+
+    /// The history store lives in the app's own Application Support folder.
+    /// SwiftData's implicit `default.store` is shared by every unsandboxed
+    /// SwiftData app on the machine, so schema collisions are inevitable
+    /// there. If our own store is ever incompatible or corrupt, recreate it:
+    /// history is a convenience cache, never the source of the audio files.
+    private static func makeHistoryContainer() throws -> ModelContainer {
+        let folder = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ).appendingPathComponent("Setlist", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder,
+            withIntermediateDirectories: true
+        )
+        let storeURL = folder.appendingPathComponent("History.store")
+        let configuration = ModelConfiguration(url: storeURL)
+
+        do {
+            return try ModelContainer(
+                for: HistoryRecord.self,
+                configurations: configuration
+            )
+        } catch {
+            for suffix in ["", "-shm", "-wal"] {
+                try? FileManager.default.removeItem(
+                    at: URL(fileURLWithPath: storeURL.path + suffix)
+                )
+            }
+            return try ModelContainer(
+                for: HistoryRecord.self,
+                configurations: configuration
+            )
+        }
     }
 
     func startNewSet() {
