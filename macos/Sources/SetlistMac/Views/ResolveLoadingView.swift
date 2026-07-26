@@ -1,0 +1,150 @@
+import SwiftUI
+
+struct ResolveLoadingView: View {
+    let sourceURL: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var presentation: ResolvePresentation {
+        ResolvePresentation(reduceMotion: reduceMotion)
+    }
+
+    var body: some View {
+        ZStack {
+            SetlistDetailBackground()
+
+            HStack(alignment: .center, spacing: 64) {
+                artworkSkeleton
+                    .frame(width: 290)
+
+                VStack(alignment: .leading, spacing: 34) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("RESOLVING")
+                            .font(.caption.weight(.semibold))
+                            .tracking(2.2)
+                            .foregroundStyle(SetlistTheme.cherry)
+
+                        Text("Reading the room")
+                            .font(.system(size: 38, weight: .medium))
+                            .tracking(-1.1)
+                            .foregroundStyle(SetlistTheme.paper)
+
+                        Text(sourceURL)
+                            .font(.callout)
+                            .foregroundStyle(SetlistTheme.mutedPaper)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    phaseRail
+                }
+                .frame(maxWidth: 470, alignment: .leading)
+            }
+            .frame(maxWidth: SetlistTheme.contentWidth)
+            .padding(SetlistTheme.detailPadding)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Resolving YouTube set")
+    }
+
+    private var artworkSkeleton: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            RoundedRectangle(cornerRadius: 5)
+                .fill(SetlistTheme.paper.opacity(0.09))
+                .aspectRatio(1, contentMode: .fit)
+
+            RoundedRectangle(cornerRadius: 4)
+                .fill(SetlistTheme.paper.opacity(0.11))
+                .frame(width: 210, height: 22)
+
+            RoundedRectangle(cornerRadius: 3)
+                .fill(SetlistTheme.paper.opacity(0.07))
+                .frame(width: 128, height: 14)
+        }
+        .modifier(ResolveShimmer(active: presentation.shimmerEnabled))
+        .accessibilityHidden(true)
+    }
+
+    private var phaseRail: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(presentation.phases.enumerated()), id: \.element.id) {
+                index,
+                phase in
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(spacing: 0) {
+                        ZStack {
+                            Circle()
+                                .stroke(
+                                    index == 0
+                                        ? SetlistTheme.cherry
+                                        : SetlistTheme.hairline,
+                                    lineWidth: 1.5
+                                )
+                                .frame(width: 18, height: 18)
+                            if index == 0 {
+                                Circle()
+                                    .fill(SetlistTheme.cherry)
+                                    .frame(width: 6, height: 6)
+                            }
+                        }
+
+                        if index < presentation.phases.count - 1 {
+                            Rectangle()
+                                .fill(SetlistTheme.hairline)
+                                .frame(width: 1, height: 35)
+                        }
+                    }
+
+                    Text(phase.title)
+                        .font(.body.weight(index == 0 ? .semibold : .regular))
+                        .foregroundStyle(
+                            index == 0
+                                ? SetlistTheme.paper
+                                : SetlistTheme.mutedPaper.opacity(0.7)
+                        )
+                        .padding(.top, -1)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(phase.title)
+                .accessibilityValue(index == 0 ? "In progress" : "Pending")
+            }
+        }
+    }
+}
+
+private struct ResolveShimmer: ViewModifier {
+    let active: Bool
+    @State private var offset: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if active {
+                    GeometryReader { geometry in
+                        LinearGradient(
+                            colors: [
+                                .clear,
+                                SetlistTheme.paper.opacity(0.12),
+                                .clear,
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(width: geometry.size.width * 0.45)
+                        .rotationEffect(.degrees(18))
+                        .offset(x: offset * geometry.size.width * 1.4)
+                    }
+                    .mask(content)
+                    .allowsHitTesting(false)
+                }
+            }
+            .onAppear {
+                guard active else {
+                    return
+                }
+                withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) {
+                    offset = 1
+                }
+            }
+    }
+}

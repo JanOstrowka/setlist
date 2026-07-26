@@ -5,6 +5,20 @@ import XCTest
 
 @MainActor
 final class WorkflowControllerTests: XCTestCase {
+    func testStartOverReturnsTerminalWorkflowToIdle() async throws {
+        let api = StubAPI(resolve: { _ in throw StubError.resolveFailed })
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("https://youtu.be/failure")
+        guard case .failed = controller.state else {
+            return XCTFail("Expected failed state")
+        }
+
+        controller.startOver()
+
+        XCTAssertEqual(controller.state, .idle)
+    }
+
     func testResolvePersistsResolvingBeforeCallingAPI() async throws {
         let gate = ValueGate<APIResolveResponse>()
         let api = StubAPI(resolve: { url in

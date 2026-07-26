@@ -204,6 +204,25 @@ final class WorkflowController {
         progressTask = nil
     }
 
+    func startOver() {
+        guard case .processing = state else {
+            do {
+                try cancelActiveWorkForNewResolve()
+                state = .idle
+            } catch {
+                state = .failed(
+                    FailedJob(
+                        recordID: activeRecordID,
+                        backendJobID: activeBackendJobID,
+                        message: "Could not start a new set: \(Self.describe(error))",
+                        failedAt: Date()
+                    )
+                )
+            }
+            return
+        }
+    }
+
     func process() async {
         guard let task = startProcessing() else {
             return
