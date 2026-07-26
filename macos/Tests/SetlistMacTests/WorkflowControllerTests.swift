@@ -233,6 +233,51 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertTrue(draft.tracklist.note.contains(found.absoluteString))
     }
 
+    func testIsFetchingTracklistTracksLookupLifecycle() async throws {
+        let tracklistGate = ValueGate<APITracklist>()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            autoTracklist: { query, _, _ in try await tracklistGate.wait(for: query) }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+        XCTAssertFalse(controller.isFetchingTracklist)
+
+        let lookup = Task { await controller.autoTracklist(query: "find") }
+        try await waitUntil { await tracklistGate.hasWaiter(for: "find") }
+        XCTAssertTrue(controller.isFetchingTracklist)
+
+        await tracklistGate.resume(.success(.named("Found")), for: "find")
+        await lookup.value
+
+        XCTAssertFalse(controller.isFetchingTracklist)
+    }
+
+    func testManualEditDuringLookupClearsFetchingState() async throws {
+        let tracklistGate = ValueGate<APITracklist>()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            autoTracklist: { query, _, _ in try await tracklistGate.wait(for: query) }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+
+        let lookup = Task { await controller.autoTracklist(query: "find") }
+        try await waitUntil { await tracklistGate.hasWaiter(for: "find") }
+        guard case .reviewing(var edited) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        edited.tracklist = .named("Manual")
+        controller.replaceDraft(edited)
+
+        XCTAssertFalse(controller.isFetchingTracklist)
+        await tracklistGate.resume(.success(.named("Late")), for: "find")
+        await lookup.value
+        XCTAssertFalse(controller.isFetchingTracklist)
+    }
+
     func testAutoTracklistKeepsBackendResultWhenItHasTracks() async throws {
         let api = StubAPI(
             resolve: { _ in .fixture(videoID: "video") },

@@ -16,8 +16,16 @@ final class WorkflowController {
     @ObservationIgnored private var tracklistTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
     @ObservationIgnored private var resolveToken: UUID?
-    @ObservationIgnored private var tracklistToken: UUID?
+    @ObservationIgnored private var tracklistToken: UUID? {
+        didSet {
+            isFetchingTracklist = tracklistToken != nil
+        }
+    }
     @ObservationIgnored private var progressToken: UUID?
+
+    /// True while a tracklist lookup (auto-find or paste) is in flight;
+    /// the review scene shows skeleton rows during it.
+    private(set) var isFetchingTracklist = false
     @ObservationIgnored private var draftRevision = 0
 
     init(

@@ -2,8 +2,10 @@ import SwiftUI
 
 struct TracklistEditor: View {
     @Binding var draft: SetDraft
+    let isFetching: Bool
     let seek: (Double) -> Void
     let pasteTracklist: (String) -> Void
+    let retryFind: () -> Void
 
     @State private var pasteText = ""
     @State private var showsPasteSheet = false
@@ -13,7 +15,11 @@ struct TracklistEditor: View {
             header
 
             if draft.tracklist.tracks.isEmpty {
-                emptyState
+                if isFetching {
+                    TracklistSkeleton()
+                } else {
+                    emptyState
+                }
             } else {
                 trackRows
             }
@@ -57,7 +63,10 @@ struct TracklistEditor: View {
     }
 
     private var sourceDescription: String {
-        switch draft.tracklist.source {
+        if isFetching, draft.tracklist.tracks.isEmpty {
+            return "Searching 1001tracklists…"
+        }
+        return switch draft.tracklist.source {
         case .chapters:
             "From YouTube chapters"
         case .description:
@@ -72,16 +81,37 @@ struct TracklistEditor: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("No tracks yet")
+        VStack(alignment: .leading, spacing: 10) {
+            Text("No tracklist found")
                 .font(.headline)
                 .foregroundStyle(SetlistTheme.paper)
             Text(
-                "Add cue points to split the set into individual tracks, "
-                    + "or turn off splitting to keep one continuous file."
+                draft.tracklist.note.isEmpty
+                    ? "Add cue points to split the set into individual "
+                        + "tracks, or turn off splitting to keep one "
+                        + "continuous file."
+                    : draft.tracklist.note
             )
             .font(.callout)
             .foregroundStyle(SetlistTheme.mutedPaper)
+
+            HStack(spacing: 10) {
+                Button {
+                    retryFind()
+                } label: {
+                    Label(
+                        "Retry Find Tracklist",
+                        systemImage: "sparkle.magnifyingglass"
+                    )
+                }
+
+                Button("Add Tracks Manually", systemImage: "plus") {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        draft.addTrack()
+                    }
+                }
+            }
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 18)
@@ -188,6 +218,58 @@ struct TracklistEditor: View {
                 false
             }
         }
+    }
+}
+
+/// Skeleton rows shown while the tracklist search is in flight, shaped
+/// like the real track rows so the reveal does not shift the layout.
+private struct TracklistSkeleton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        VStack(spacing: 14) {
+            ForEach(0..<6, id: \.self) { index in
+                HStack(spacing: 10) {
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(SetlistTheme.paper.opacity(0.08))
+                        .frame(width: 24, height: 12)
+                    Circle()
+                        .fill(SetlistTheme.paper.opacity(0.08))
+                        .frame(width: 16, height: 16)
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(SetlistTheme.paper.opacity(0.10))
+                        .frame(width: 76, height: 20)
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(SetlistTheme.paper.opacity(0.10))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 20)
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(SetlistTheme.paper.opacity(0.08))
+                        .frame(width: 180, height: 20)
+                }
+                .opacity(rowOpacity(index))
+            }
+        }
+        .padding(.vertical, 12)
+        .opacity(pulsing ? 0.55 : 1)
+        .onAppear {
+            guard !reduceMotion else {
+                return
+            }
+            withAnimation(
+                .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
+            ) {
+                pulsing = true
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Searching for a tracklist")
+    }
+
+    /// Later rows fade out slightly, hinting at a list still filling in.
+    private func rowOpacity(_ index: Int) -> Double {
+        1 - Double(index) * 0.13
     }
 }
 

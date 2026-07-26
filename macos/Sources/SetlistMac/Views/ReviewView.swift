@@ -5,7 +5,6 @@ struct ReviewView: View {
     let draft: SetDraft
 
     @State private var player = YouTubePlayerController()
-    @State private var isFetchingTracklist = false
 
     private var draftBinding: Binding<SetDraft> {
         Binding(
@@ -40,6 +39,16 @@ struct ReviewView: View {
                 .frame(maxWidth: SetlistTheme.contentWidth, alignment: .leading)
                 .padding(SetlistTheme.detailPadding)
             }
+        }
+        .task(id: draft.historyID) {
+            // Sets without chapters arrive with an empty tracklist; find
+            // one automatically instead of waiting for a button press.
+            guard draft.tracklist.tracks.isEmpty,
+                  draft.tracklist.source == .none,
+                  !workflow.isFetchingTracklist else {
+                return
+            }
+            await fetchTracklist()
         }
     }
 
@@ -93,40 +102,21 @@ struct ReviewView: View {
     }
 
     private var rightColumn: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Button {
-                    fetchTracklist()
-                } label: {
-                    if isFetchingTracklist {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("Finding tracklist…")
-                        }
-                    } else {
-                        Label(
-                            "Find Tracklist",
-                            systemImage: "sparkle.magnifyingglass"
-                        )
-                    }
+        TracklistEditor(
+            draft: draftBinding,
+            isFetching: workflow.isFetchingTracklist,
+            seek: { player.seek(to: $0) },
+            pasteTracklist: { text in
+                Task {
+                    await workflow.parseTracklist(text)
                 }
-                .disabled(isFetchingTracklist)
-                Spacer()
+            },
+            retryFind: {
+                Task {
+                    await fetchTracklist()
+                }
             }
-
-            TracklistEditor(
-                draft: draftBinding,
-                seek: { player.seek(to: $0) },
-                pasteTracklist: { text in
-                    Task {
-                        isFetchingTracklist = true
-                        defer { isFetchingTracklist = false }
-                        await workflow.parseTracklist(text)
-                    }
-                }
-            )
-        }
+        )
     }
 
     private var footer: some View {
@@ -167,17 +157,13 @@ struct ReviewView: View {
         }
     }
 
-    private func fetchTracklist() {
+    private func fetchTracklist() async {
         let query = [draft.metadata.artist, draft.metadata.title]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        Task {
-            isFetchingTracklist = true
-            defer { isFetchingTracklist = false }
-            await workflow.autoTracklist(
-                query: query.isEmpty ? draft.detectedLine : query
-            )
-        }
+        await workflow.autoTracklist(
+            query: query.isEmpty ? draft.detectedLine : query
+        )
     }
 }
 
