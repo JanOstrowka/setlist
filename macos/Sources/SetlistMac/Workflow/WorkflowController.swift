@@ -230,6 +230,16 @@ final class WorkflowController {
         await Self.waitForTask(task)
     }
 
+    /// User-initiated cancellation of the active production job. The
+    /// progress worker observes the cancellation, requests a backend
+    /// cancel, and reconciles the terminal state.
+    func cancelProcessing() {
+        guard case .processing = state else {
+            return
+        }
+        progressTask?.cancel()
+    }
+
     @discardableResult
     func startProcessing() -> Task<Void, Never>? {
         guard case .reviewing(let draft) = state else {
@@ -857,7 +867,11 @@ final class WorkflowController {
                     percent: snapshot.latest.overallPercent
                         ?? snapshot.latest.stagePercent,
                     message: snapshot.latest.message,
-                    frozenDraft: frozenDraft
+                    frozenDraft: frozenDraft,
+                    trackIndex: snapshot.latest.trackIndex,
+                    trackCount: snapshot.latest.trackCount,
+                    trackTitle: snapshot.latest.trackTitle,
+                    trackState: snapshot.latest.trackState
                 )
             )
         } catch {
@@ -1049,7 +1063,15 @@ final class WorkflowController {
                 stage: stage,
                 percent: event.overallPercent ?? event.stagePercent,
                 message: event.message,
-                frozenDraft: frozenDraft
+                frozenDraft: frozenDraft,
+                trackIndex: event.trackIndex,
+                trackCount: event.trackCount,
+                trackTitle: event.trackTitle,
+                trackState: event.trackState,
+                downloadedBytes: event.downloadedBytes,
+                totalBytes: event.totalBytes,
+                speedBytesPerSecond: event.speedBytesPerSecond,
+                etaSeconds: event.etaSeconds
             )
         )
     }

@@ -99,16 +99,8 @@ private struct WorkflowDetailView: View {
             ReviewView(workflow: workflow, draft: draft)
                 .transition(.opacity)
         case .processing(let processing):
-            MilestoneStatusView(
-                eyebrow: "IN PRODUCTION",
-                title: processing.message.isEmpty
-                    ? "Processing the set"
-                    : processing.message,
-                detail: "The media engine is working through \(processing.stage.displayTitle.lowercased()).",
-                status: "\(Int(processing.percent.rounded()))%",
-                actionTitle: nil,
-                action: nil
-            )
+            ProcessingView(workflow: workflow, processing: processing)
+                .transition(.opacity)
         case .completed(let completed):
             MilestoneStatusView(
                 eyebrow: "COMPLETE",

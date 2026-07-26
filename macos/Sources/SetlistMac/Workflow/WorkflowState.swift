@@ -48,6 +48,46 @@ struct ProcessingState: Equatable, Sendable {
     let percent: Double
     let message: String
     let frozenDraft: SetDraft
+    let trackIndex: Int?
+    let trackCount: Int?
+    let trackTitle: String?
+    let trackState: APITrackProgressState?
+    let downloadedBytes: Int?
+    let totalBytes: Int?
+    let speedBytesPerSecond: Double?
+    let etaSeconds: Double?
+
+    init(
+        recordID: UUID,
+        backendJobID: String?,
+        stage: HistoryStage,
+        percent: Double,
+        message: String,
+        frozenDraft: SetDraft,
+        trackIndex: Int? = nil,
+        trackCount: Int? = nil,
+        trackTitle: String? = nil,
+        trackState: APITrackProgressState? = nil,
+        downloadedBytes: Int? = nil,
+        totalBytes: Int? = nil,
+        speedBytesPerSecond: Double? = nil,
+        etaSeconds: Double? = nil
+    ) {
+        self.recordID = recordID
+        self.backendJobID = backendJobID
+        self.stage = stage
+        self.percent = percent
+        self.message = message
+        self.frozenDraft = frozenDraft
+        self.trackIndex = trackIndex
+        self.trackCount = trackCount
+        self.trackTitle = trackTitle
+        self.trackState = trackState
+        self.downloadedBytes = downloadedBytes
+        self.totalBytes = totalBytes
+        self.speedBytesPerSecond = speedBytesPerSecond
+        self.etaSeconds = etaSeconds
+    }
 }
 
 struct CompletedJob: Equatable, Sendable {
