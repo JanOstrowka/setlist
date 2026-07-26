@@ -38,6 +38,11 @@ struct SetDraft: Equatable, Sendable {
         tracklist = response.tracklist ?? APITracklist()
         self.format = format
         self.split = split ?? !(response.tracklist?.tracks.isEmpty ?? true)
+        // A chapter tracklist mixing different artists is a
+        // various-artists set from the start.
+        if Self.hasVariousArtists(tracklist.tracks) {
+            metadata.compilation = true
+        }
     }
 }
 

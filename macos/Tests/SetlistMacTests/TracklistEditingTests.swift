@@ -129,6 +129,79 @@ final class ReviewValidationTests: XCTestCase {
         XCTAssertTrue(draft.validationIssues.isEmpty)
         XCTAssertTrue(draft.canStartProcessing)
     }
+
+    func testApplyFetchedTracklistEnablesSplit() {
+        var draft = SetDraft.editingFixture(split: false, tracks: [])
+
+        draft.applyFetchedTracklist(
+            APITracklist(
+                source: .oneThousandOneTracklists,
+                tracks: [
+                    APITrack(start: 0, title: "A", artist: "One"),
+                    APITrack(start: 60, title: "B", artist: "One"),
+                ]
+            )
+        )
+
+        XCTAssertTrue(draft.split)
+        // A single distinct artist is not a various-artists set.
+        XCTAssertFalse(draft.metadata.compilation)
+    }
+
+    func testApplyFetchedTracklistTagsVariousArtistsCompilation() {
+        var draft = SetDraft.editingFixture(split: false, tracks: [])
+
+        draft.applyFetchedTracklist(
+            APITracklist(
+                source: .oneThousandOneTracklists,
+                tracks: [
+                    APITrack(start: 0, title: "A", artist: "One"),
+                    APITrack(start: 60, title: "B", artist: "Two"),
+                ]
+            )
+        )
+
+        XCTAssertTrue(draft.split)
+        XCTAssertTrue(draft.metadata.compilation)
+    }
+
+    func testApplyFetchedEmptyTracklistLeavesOutputChoicesAlone() {
+        var draft = SetDraft.editingFixture(split: false, tracks: [])
+
+        draft.applyFetchedTracklist(APITracklist(source: .none))
+
+        XCTAssertFalse(draft.split)
+        XCTAssertFalse(draft.metadata.compilation)
+    }
+
+    func testHasVariousArtistsIgnoresCaseWhitespaceAndBlanks() {
+        XCTAssertFalse(
+            SetDraft.hasVariousArtists([
+                APITrack(title: "A", artist: "John Summit"),
+                APITrack(title: "B", artist: " john summit "),
+                APITrack(title: "C", artist: ""),
+            ])
+        )
+        XCTAssertTrue(
+            SetDraft.hasVariousArtists([
+                APITrack(title: "A", artist: "John Summit"),
+                APITrack(title: "B", artist: "Icarus"),
+            ])
+        )
+        XCTAssertFalse(SetDraft.hasVariousArtists([]))
+    }
+
+    func testResolveWithVariousArtistChaptersTagsCompilation() {
+        let draft = SetDraft.editingFixture(
+            split: true,
+            tracks: [
+                APITrack(start: 0, title: "A", artist: "One"),
+                APITrack(start: 60, title: "B", artist: "Two"),
+            ]
+        )
+
+        XCTAssertTrue(draft.metadata.compilation)
+    }
 }
 
 extension SetDraft {

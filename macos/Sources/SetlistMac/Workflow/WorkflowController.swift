@@ -674,7 +674,7 @@ final class WorkflowController {
                     return
                 }
 
-                current.tracklist = tracklist
+                current.applyFetchedTracklist(tracklist)
                 self.draftRevision += 1
                 self.state = .reviewing(current)
                 try self.persist(draft: current)

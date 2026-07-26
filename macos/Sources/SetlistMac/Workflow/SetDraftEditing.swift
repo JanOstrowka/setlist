@@ -21,6 +21,39 @@ enum DraftValidationIssue: Equatable, Sendable {
 }
 
 extension SetDraft {
+    /// Applies a tracklist that arrived from a lookup (auto-find or
+    /// paste) and adjusts the output defaults to match it: a set with a
+    /// tracklist is meant to be split, and a set mixing different
+    /// artists is tagged as a compilation so Music files it under
+    /// various artists. Only turns options on — the user's explicit
+    /// choices are never switched off.
+    mutating func applyFetchedTracklist(_ fetched: APITracklist) {
+        tracklist = fetched
+        guard !fetched.tracks.isEmpty else {
+            return
+        }
+        split = true
+        if Self.hasVariousArtists(fetched.tracks) {
+            metadata.compilation = true
+        }
+    }
+
+    static func hasVariousArtists(_ tracks: [APITrack]) -> Bool {
+        var artists = Set<String>()
+        for track in tracks {
+            let artist = track.artist
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if !artist.isEmpty {
+                artists.insert(artist)
+            }
+            if artists.count >= 2 {
+                return true
+            }
+        }
+        return false
+    }
+
     mutating func moveTrack(from source: Int, to destination: Int) {
         guard tracklist.tracks.indices.contains(source),
               destination >= 0,
