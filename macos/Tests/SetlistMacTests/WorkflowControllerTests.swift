@@ -105,7 +105,11 @@ final class WorkflowControllerTests: XCTestCase {
             }
         )
         let history = try makeHistory()
-        let controller = WorkflowController(api: api, history: history)
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
         await controller.resolve("source")
 
         let oldTask = Task { await controller.autoTracklist(query: "old") }
@@ -139,7 +143,11 @@ final class WorkflowControllerTests: XCTestCase {
             }
         )
         let history = try makeHistory()
-        let controller = WorkflowController(api: api, history: history)
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
         await controller.resolve("source")
 
         let lookup = Task { await controller.autoTracklist(query: "lookup") }
@@ -347,7 +355,11 @@ final class WorkflowControllerTests: XCTestCase {
             job: { _ in throw StubError.disconnected }
         )
         let history = try makeHistory()
-        let controller = WorkflowController(api: api, history: history)
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
         await controller.resolve("source")
 
         await controller.process()
@@ -374,7 +386,11 @@ final class WorkflowControllerTests: XCTestCase {
             job: { _ in try await snapshots.next() }
         )
         let history = try makeHistory()
-        let controller = WorkflowController(api: api, history: history)
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
         await controller.resolve("source")
 
         await controller.process()
@@ -509,7 +525,7 @@ final class WorkflowControllerTests: XCTestCase {
         let controller = WorkflowController(
             api: api,
             history: history,
-            retryDelay: {}
+            retryDelay: { _ in }
         )
         await controller.resolve("source")
 
@@ -522,6 +538,147 @@ final class WorkflowControllerTests: XCTestCase {
         }
         XCTAssertEqual(completed.outputPaths, ["/tmp/polled.m4a"])
         XCTAssertEqual(history.records.first?.status, .completed)
+    }
+
+    func testPollingUsesCappedExponentialBackoff() async throws {
+        let snapshots = SnapshotQueue([
+            .processing(jobID: "job-1"),
+            .processing(jobID: "job-1"),
+            .processing(jobID: "job-1"),
+            .processing(jobID: "job-1"),
+            .processing(jobID: "job-1"),
+            .processing(jobID: "job-1"),
+            .completed(jobID: "job-1", paths: []),
+        ])
+        let delays = DelayRecorder()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .failure(StubError.disconnected) },
+            job: { _ in try await snapshots.next() }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { duration in
+                await delays.record(duration)
+            }
+        )
+        await controller.resolve("source")
+
+        await controller.process()
+
+        let recorded = await delays.snapshot()
+        XCTAssertEqual(
+            recorded,
+            [
+                .milliseconds(250),
+                .milliseconds(500),
+                .seconds(1),
+                .seconds(2),
+                .seconds(2),
+                .seconds(2),
+            ]
+        )
+    }
+
+    func testJobNotFoundDuringReconciliationPersistsInterrupted() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .failure(StubError.disconnected) },
+            job: { _ in
+                throw SetlistAPIError.httpStatus(
+                    404,
+                    Data("missing".utf8)
+                )
+            }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
+        await controller.resolve("source")
+
+        await controller.process()
+
+        XCTAssertEqual(history.records.first?.status, .interrupted)
+        guard case .failed(let failure) = controller.state else {
+            return XCTFail("Expected actionable interrupted failure")
+        }
+        XCTAssertTrue(failure.message.localizedCaseInsensitiveContains("not found"))
+        XCTAssertTrue(failure.message.localizedCaseInsensitiveContains("retry"))
+        let jobRequests = await api.jobRequestsSnapshot()
+        XCTAssertEqual(jobRequests, ["job-1"])
+    }
+
+    func testTransientReconciliationErrorRetriesWithBackoff() async throws {
+        let snapshots = TransientSnapshotSequence()
+        let delays = DelayRecorder()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .failure(StubError.disconnected) },
+            job: { _ in try await snapshots.next() }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { duration in
+                await delays.record(duration)
+            }
+        )
+        await controller.resolve("source")
+
+        await controller.process()
+
+        guard case .completed = controller.state else {
+            return XCTFail("Expected completion after transient retry")
+        }
+        let jobRequests = await api.jobRequestsSnapshot()
+        XCTAssertEqual(jobRequests, ["job-1", "job-1"])
+        let recorded = await delays.snapshot()
+        XCTAssertEqual(recorded, [.milliseconds(250)])
+    }
+
+    func testDetachedTeardownCancellationHasFiniteAttemptBudget() async throws {
+        let streamProbe = StreamProbe()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) },
+            job: { _ in .cancelling(jobID: "job-1") },
+            cancel: { _ in .cancelling(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        var controller: WorkflowController? = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in },
+            detachedCancellationAttemptLimit: 3
+        )
+        await controller?.resolve("source")
+        weak let weakController = controller
+        controller?.startProcessing()
+        try await waitUntil { await streamProbe.didStart }
+        let initialJobCount = await api.jobRequestsSnapshot().count
+
+        controller = nil
+        try await waitUntil { weakController == nil }
+        try await waitUntil {
+            let cancels = await api.cancelRequestsSnapshot().count
+            let jobs = await api.jobRequestsSnapshot().count
+            return cancels == 1 && jobs == initialJobCount + 2
+        }
+
+        let cancelCount = await api.cancelRequestsSnapshot().count
+        let jobCount = await api.jobRequestsSnapshot().count
+        XCTAssertEqual(cancelCount, 1)
+        XCTAssertEqual(jobCount, initialJobCount + 2)
     }
 
     func testCancellationDuringSSECancelsAndPollsBackendToTerminal() async throws {
@@ -541,7 +698,7 @@ final class WorkflowControllerTests: XCTestCase {
         let controller = WorkflowController(
             api: api,
             history: history,
-            retryDelay: {}
+            retryDelay: { _ in }
         )
         await controller.resolve("source")
         let processing = Task { await controller.process() }
@@ -573,7 +730,7 @@ final class WorkflowControllerTests: XCTestCase {
         let controller = WorkflowController(
             api: api,
             history: history,
-            retryDelay: {}
+            retryDelay: { _ in }
         )
         await controller.resolve("source")
         let processing = Task { await controller.process() }
@@ -612,7 +769,7 @@ final class WorkflowControllerTests: XCTestCase {
         let controller = WorkflowController(
             api: api,
             history: history,
-            retryDelay: {}
+            retryDelay: { _ in }
         )
         await controller.resolve("source")
         let processing = Task { await controller.process() }
@@ -639,13 +796,13 @@ final class WorkflowControllerTests: XCTestCase {
             job: { _ in
                 try await cancellationGate.wait(for: "cancelling")
             },
-            cancel: { _ in .cancelled(jobID: "job-1") }
+            cancel: { _ in .cancelling(jobID: "job-1") }
         )
         let history = try makeHistory()
         let controller = WorkflowController(
             api: api,
             history: history,
-            retryDelay: {}
+            retryDelay: { _ in }
         )
         await controller.resolve("original")
         let processing = Task { await controller.process() }
@@ -683,7 +840,7 @@ final class WorkflowControllerTests: XCTestCase {
         var controller: WorkflowController? = WorkflowController(
             api: api,
             history: history,
-            retryDelay: {}
+            retryDelay: { _ in }
         )
         await controller?.resolve("source")
         weak let weakController = controller
@@ -765,13 +922,24 @@ private actor ValueGate<Value: Sendable> {
 private actor StreamProbe {
     private(set) var didStart = false
     private(set) var didTerminate = false
+    private var continuation: AsyncThrowingStream<
+        APIProgressEvent,
+        Error
+    >.Continuation?
 
-    func started() {
+    func started(
+        continuation: AsyncThrowingStream<
+            APIProgressEvent,
+            Error
+        >.Continuation
+    ) {
         didStart = true
+        self.continuation = continuation
     }
 
     func terminated() {
         didTerminate = true
+        continuation = nil
     }
 }
 
@@ -787,6 +955,30 @@ private actor SnapshotQueue {
             throw StubError.unconfigured
         }
         return snapshots.removeFirst()
+    }
+}
+
+private actor DelayRecorder {
+    private var durations: [Duration] = []
+
+    func record(_ duration: Duration) {
+        durations.append(duration)
+    }
+
+    func snapshot() -> [Duration] {
+        durations
+    }
+}
+
+private actor TransientSnapshotSequence {
+    private var requestCount = 0
+
+    func next() throws -> APIJobSnapshot {
+        requestCount += 1
+        if requestCount == 1 {
+            throw StubError.disconnected
+        }
+        return .completed(jobID: "job-1", paths: [])
     }
 }
 
@@ -1008,7 +1200,7 @@ private extension AsyncThrowingStream where Element == APIProgressEvent, Failure
     static func open(probe: StreamProbe) -> Self {
         Self { continuation in
             Task {
-                await probe.started()
+                await probe.started(continuation: continuation)
             }
             continuation.onTermination = { @Sendable _ in
                 Task {

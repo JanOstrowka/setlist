@@ -8,7 +8,8 @@ final class WorkflowController {
 
     @ObservationIgnored private let api: any SetlistAPIProtocol
     @ObservationIgnored private let history: any HistoryStoreProtocol
-    @ObservationIgnored private let retryDelay: @Sendable () async -> Void
+    @ObservationIgnored private let retryDelay: @Sendable (Duration) async -> Void
+    @ObservationIgnored private let detachedCancellationAttemptLimit: Int
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var tracklistTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
@@ -20,13 +21,18 @@ final class WorkflowController {
     init(
         api: any SetlistAPIProtocol,
         history: any HistoryStoreProtocol,
-        retryDelay: @escaping @Sendable () async -> Void = {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+        retryDelay: @escaping @Sendable (Duration) async -> Void = { duration in
+            try? await Task.sleep(for: duration)
+        },
+        detachedCancellationAttemptLimit: Int = 8
     ) {
         self.api = api
         self.history = history
         self.retryDelay = retryDelay
+        self.detachedCancellationAttemptLimit = max(
+            1,
+            detachedCancellationAttemptLimit
+        )
 
         do {
             try history.markActiveJobsInterrupted()
@@ -244,6 +250,7 @@ final class WorkflowController {
 
         let api = api
         let retryDelay = retryDelay
+        let detachedCancellationAttemptLimit = detachedCancellationAttemptLimit
         let task = Task { [weak self] in
             defer {
                 self?.clearProgressTask(token: token)
@@ -283,6 +290,8 @@ final class WorkflowController {
                             api: api,
                             jobID: jobID,
                             retryDelay: retryDelay,
+                            teardownAttemptLimit: detachedCancellationAttemptLimit,
+                            ownerIsActive: { false },
                             onNonterminal: { _ in }
                         )
                     }
@@ -290,10 +299,14 @@ final class WorkflowController {
                 }
 
                 if Task.isCancelled {
-                    let snapshot = await Self.cancelAndPoll(
+                    let cancellation = await Self.cancelAndPoll(
                         api: api,
                         jobID: jobID,
                         retryDelay: retryDelay,
+                        teardownAttemptLimit: detachedCancellationAttemptLimit,
+                        ownerIsActive: { [weak self] in
+                            self?.ownsProgress(token: token) == true
+                        },
                         onNonterminal: { [weak self] snapshot in
                             self?.applyNonterminal(
                                 snapshot,
@@ -302,8 +315,9 @@ final class WorkflowController {
                             )
                         }
                     )
-                    try self?.applyTerminal(
-                        snapshot,
+                    try self?.applyCancellation(
+                        cancellation,
+                        jobID: jobID,
                         frozenDraft: frozenDraft,
                         token: token
                     )
@@ -365,11 +379,21 @@ final class WorkflowController {
                                 recordID: frozenDraft.historyID,
                                 message: message
                             )
+                        case .jobLost:
+                            try self?.applyJobLost(
+                                jobID: jobID,
+                                frozenDraft: frozenDraft,
+                                token: token
+                            )
                         case .cancelled:
-                            let snapshot = await Self.cancelAndPoll(
+                            let cancellation = await Self.cancelAndPoll(
                                 api: api,
                                 jobID: jobID,
                                 retryDelay: retryDelay,
+                                teardownAttemptLimit: detachedCancellationAttemptLimit,
+                                ownerIsActive: { [weak self] in
+                                    self?.ownsProgress(token: token) == true
+                                },
                                 onNonterminal: { [weak self] snapshot in
                                     self?.applyNonterminal(
                                         snapshot,
@@ -378,8 +402,9 @@ final class WorkflowController {
                                     )
                                 }
                             )
-                            try self?.applyTerminal(
-                                snapshot,
+                            try self?.applyCancellation(
+                                cancellation,
+                                jobID: jobID,
                                 frozenDraft: frozenDraft,
                                 token: token
                             )
@@ -407,11 +432,21 @@ final class WorkflowController {
                             frozenDraft: frozenDraft,
                             token: token
                         )
+                    case .jobLost:
+                        try self?.applyJobLost(
+                            jobID: jobID,
+                            frozenDraft: frozenDraft,
+                            token: token
+                        )
                     case .cancelled:
-                        let snapshot = await Self.cancelAndPoll(
+                        let cancellation = await Self.cancelAndPoll(
                             api: api,
                             jobID: jobID,
                             retryDelay: retryDelay,
+                            teardownAttemptLimit: detachedCancellationAttemptLimit,
+                            ownerIsActive: { [weak self] in
+                                self?.ownsProgress(token: token) == true
+                            },
                             onNonterminal: { [weak self] snapshot in
                                 self?.applyNonterminal(
                                     snapshot,
@@ -420,17 +455,22 @@ final class WorkflowController {
                                 )
                             }
                         )
-                        try self?.applyTerminal(
-                            snapshot,
+                        try self?.applyCancellation(
+                            cancellation,
+                            jobID: jobID,
                             frozenDraft: frozenDraft,
                             token: token
                         )
                     }
                 case .cancelledByTask:
-                    let snapshot = await Self.cancelAndPoll(
+                    let cancellation = await Self.cancelAndPoll(
                         api: api,
                         jobID: jobID,
                         retryDelay: retryDelay,
+                        teardownAttemptLimit: detachedCancellationAttemptLimit,
+                        ownerIsActive: { [weak self] in
+                            self?.ownsProgress(token: token) == true
+                        },
                         onNonterminal: { [weak self] snapshot in
                             self?.applyNonterminal(
                                 snapshot,
@@ -439,8 +479,9 @@ final class WorkflowController {
                             )
                         }
                     )
-                    try self?.applyTerminal(
-                        snapshot,
+                    try self?.applyCancellation(
+                        cancellation,
+                        jobID: jobID,
                         frozenDraft: frozenDraft,
                         token: token
                     )
@@ -610,6 +651,9 @@ final class WorkflowController {
                     try await onProgress(event)
                 }
             }
+            if Task.isCancelled {
+                return .cancelledByTask
+            }
             return .disconnected(nil)
         } catch is CancellationError {
             return .cancelledByTask
@@ -631,9 +675,11 @@ final class WorkflowController {
     private nonisolated static func pollUntilTerminal(
         api: any SetlistAPIProtocol,
         jobID: String,
-        retryDelay: @escaping @Sendable () async -> Void,
+        retryDelay: @escaping @Sendable (Duration) async -> Void,
         onNonterminal: @MainActor @escaping @Sendable (APIJobSnapshot) async -> Void
     ) async throws -> BackendPollingOutcome {
+        var backoff = PollingBackoff()
+
         while true {
             let snapshot: APIJobSnapshot
             do {
@@ -642,7 +688,10 @@ final class WorkflowController {
                 if Task.isCancelled {
                     return .cancelled
                 }
-                await retryDelay()
+                if isJobNotFound(error) {
+                    return .jobLost
+                }
+                await retryDelay(backoff.next())
                 continue
             }
 
@@ -654,7 +703,7 @@ final class WorkflowController {
             }
 
             await onNonterminal(snapshot)
-            await retryDelay()
+            await retryDelay(backoff.next())
             if Task.isCancelled {
                 return .cancelled
             }
@@ -664,13 +713,26 @@ final class WorkflowController {
     private nonisolated static func cancelAndPoll(
         api: any SetlistAPIProtocol,
         jobID: String,
-        retryDelay: @escaping @Sendable () async -> Void,
+        retryDelay: @escaping @Sendable (Duration) async -> Void,
+        teardownAttemptLimit: Int,
+        ownerIsActive: @MainActor @escaping @Sendable () -> Bool,
         onNonterminal: @MainActor @escaping @Sendable (APIJobSnapshot) async -> Void
-    ) async -> APIJobSnapshot {
-        let worker = Task.detached {
+    ) async -> CancellationPollingOutcome {
+        let worker = Task.detached { () -> CancellationPollingOutcome in
             var cancellationRequested = false
+            var backoff = PollingBackoff()
+            var remainingTeardownAttempts: Int?
 
             while true {
+                if !(await ownerIsActive()), remainingTeardownAttempts == nil {
+                    remainingTeardownAttempts = teardownAttemptLimit
+                }
+                if remainingTeardownAttempts == 0 {
+                    return .exhausted
+                }
+                if let remaining = remainingTeardownAttempts {
+                    remainingTeardownAttempts = remaining - 1
+                }
                 do {
                     let snapshot: APIJobSnapshot
                     if cancellationRequested {
@@ -681,13 +743,19 @@ final class WorkflowController {
                     }
 
                     if snapshot.status.isTerminal {
-                        return snapshot
+                        return .terminal(snapshot)
                     }
                     await onNonterminal(snapshot)
                 } catch {
-                    // Backend transport failures are retried until terminal.
+                    if isJobNotFound(error) {
+                        return .jobLost
+                    }
                 }
-                await retryDelay()
+
+                if remainingTeardownAttempts == 0 {
+                    return .exhausted
+                }
+                await retryDelay(backoff.next())
             }
         }
         return await worker.value
@@ -696,8 +764,10 @@ final class WorkflowController {
     private nonisolated static func reconcileDone(
         api: any SetlistAPIProtocol,
         jobID: String,
-        retryDelay: @escaping @Sendable () async -> Void
+        retryDelay: @escaping @Sendable (Duration) async -> Void
     ) async -> DoneReconciliationOutcome {
+        var backoff = PollingBackoff()
+
         for attempt in 0..<4 {
             do {
                 let snapshot = try await api.job(jobID: jobID)
@@ -715,16 +785,33 @@ final class WorkflowController {
                     )
                 }
                 if attempt < 3 {
-                    await retryDelay()
+                    await retryDelay(backoff.next())
                 }
             } catch {
                 if Task.isCancelled {
                     return .cancelled
                 }
+                if isJobNotFound(error) {
+                    return .jobLost
+                }
+                if attempt < 3 {
+                    await retryDelay(backoff.next())
+                    continue
+                }
                 return .fallback(String(describing: error))
             }
         }
         return .fallback("Final output paths are still being reconciled.")
+    }
+
+    private nonisolated static func isJobNotFound(_ error: any Error) -> Bool {
+        guard let apiError = error as? SetlistAPIError else {
+            return false
+        }
+        guard case .httpStatus(let status, _) = apiError else {
+            return false
+        }
+        return status == 404
     }
 
     private func applyNonterminal(
@@ -813,6 +900,53 @@ final class WorkflowController {
         case .queued, .processing, .cancelling:
             return
         }
+    }
+
+    private func applyCancellation(
+        _ outcome: CancellationPollingOutcome,
+        jobID: String,
+        frozenDraft: SetDraft,
+        token: UUID
+    ) throws {
+        switch outcome {
+        case .terminal(let snapshot):
+            try applyTerminal(
+                snapshot,
+                frozenDraft: frozenDraft,
+                token: token
+            )
+        case .jobLost:
+            try applyJobLost(
+                jobID: jobID,
+                frozenDraft: frozenDraft,
+                token: token
+            )
+        case .exhausted:
+            break
+        }
+    }
+
+    private func applyJobLost(
+        jobID: String,
+        frozenDraft: SetDraft,
+        token: UUID
+    ) throws {
+        guard progressToken == token,
+              let record = record(id: frozenDraft.historyID) else {
+            return
+        }
+        record.backendJobID = jobID
+        record.stage = .unknown
+        try persistTerminalFailure(
+            record: record,
+            status: .interrupted,
+            message: "Backend job \(jobID) was not found. "
+                + "The backend may have restarted; retry the download."
+        )
+    }
+
+    private func ownsProgress(token: UUID) -> Bool {
+        progressToken == token
     }
 
     private func persistCompletionNote(
@@ -1098,13 +1232,31 @@ private enum ProgressStreamOutcome: Sendable {
 
 private enum BackendPollingOutcome: Sendable {
     case terminal(APIJobSnapshot)
+    case jobLost
     case cancelled
 }
 
 private enum DoneReconciliationOutcome: Sendable {
     case completed(APIJobSnapshot)
     case fallback(String)
+    case jobLost
     case cancelled
+}
+
+private enum CancellationPollingOutcome: Sendable {
+    case terminal(APIJobSnapshot)
+    case jobLost
+    case exhausted
+}
+
+private struct PollingBackoff: Sendable {
+    private var milliseconds = 250
+
+    mutating func next() -> Duration {
+        let delay = Duration.milliseconds(milliseconds)
+        milliseconds = min(milliseconds * 2, 2_000)
+        return delay
+    }
 }
 
 private extension APIJobStatus {
