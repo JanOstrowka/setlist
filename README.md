@@ -8,8 +8,10 @@ drag into Apple Music. Files-only: nothing is auto-imported.
 Three ways to use it (all end with files in `~/Music` on your Mac):
 
 - **Local**: `./run.sh` → <http://127.0.0.1:8765> (loopback only, no config needed).
-- **Mac menu bar app**: `./scripts/build_macos_app.sh`, then open `dist/Setlist.app`.
-  It starts the same local backend and presents the existing UI in a native window.
+- **Native Mac app** (macOS 26+): `./scripts/build_macos_app.sh`, then open `dist/Setlist.app`.
+  A fully native SwiftUI experience over the same local backend: paste-first landing,
+  review workspace with a YouTube preview, per-track production progress, and an
+  Add to Apple Music finish.
 - **Hosted site**: <https://list-setlist.vercel.app> — the same UI served from Vercel,
   talking to the local helper directly, optionally routing jobs through n8n for an
   audit trail. See `docs/hosted-site.md`.
@@ -36,23 +38,38 @@ cp .env.example .env   # then edit .env and add your keys
 
 `run.sh` starts the server on `http://127.0.0.1:8765` (loopback only) and opens your browser.
 
-### Mac menu bar app
+### Native Mac app (macOS 26+)
 
-Build and open the native wrapper:
+Build and open the native app:
 
 ```bash
 ./scripts/build_macos_app.sh
 open dist/Setlist.app
 ```
 
-The app lives in the menu bar, opens Setlist in a native WebKit window, and starts
-`run.sh` without opening a browser. If the server or login helper is already running,
-the app attaches to it instead of starting a duplicate. On quit, it only stops a server
-process that it started itself.
+The app lives in the menu bar and opens a native SwiftUI window — the Python backend
+runs invisibly as the media engine. Highlights:
 
-This first local build intentionally keeps the Python backend in the source checkout;
-rebuild the app after moving the repository. A later distribution build can bundle the
-backend, ffmpeg, signing, and notarization into a portable `.app`.
+- **Paste-first landing** with URL validation and a durable **Recent** sidebar
+  (SwiftData) that remembers every set: queued, processing, completed, failed,
+  cancelled, and interrupted.
+- **Review workspace**: native metadata editor, editable tracklist with cue
+  validation and drag reordering, and an embedded YouTube preview player that
+  seeks to any cue (the only web view in the app, scoped to YouTube).
+- **Production scene**: stage rail (Download → Encode → Split → Tag), live overall
+  percent with download speed/ETA, and per-track cutting/tagging/ready statuses.
+  One set is produced at a time.
+- **Completion**: finished tracks flow into your Mac, then an **Add to Apple Music**
+  CTA imports them via Music automation (macOS asks for permission the first time);
+  Reveal in Finder is one click away. Nothing is imported without your say-so.
+- **Safety**: the app attaches only to a server that identifies itself as the
+  Setlist engine; quitting during production asks first, cancels the job cleanly,
+  and interrupted sets are recovered into Recent on the next launch. Reduce Motion
+  swaps animations for crossfades.
+
+The build keeps the Python backend in the source checkout; rebuild the app after
+moving the repository. A later distribution build can bundle the backend, ffmpeg,
+signing, and notarization into a portable `.app`.
 
 To run it automatically at login instead (the "helper" behind the hosted site):
 
@@ -90,7 +107,7 @@ consistent `aART`, `trkn=(1,1)`, and `pgap=1` (gapless) so files import cleanly.
 ```bash
 pip install -e ".[dev]"
 pytest -q                 # unit tests (ffmpeg-dependent ones skip if ffmpeg is missing)
-swift test --package-path macos  # native menu bar wrapper tests
+swift test --package-path macos  # native app tests (workflow, API contract, UI state)
 RUN_SMOKE=1 pytest tests/test_smoke.py -v   # optional end-to-end network test
 ```
 
