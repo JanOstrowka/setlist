@@ -10,18 +10,21 @@ final class SetlistAppEnvironment {
     let modelContainer: ModelContainer
     let history: HistoryStore
     let workflow: WorkflowController
+    let musicImporter: any MusicImporting
     var selectedRecordID: UUID?
 
     init(
         backend: BackendController,
         modelContainer: ModelContainer,
         history: HistoryStore,
-        workflow: WorkflowController
+        workflow: WorkflowController,
+        musicImporter: any MusicImporting = AppleMusicImporter()
     ) {
         self.backend = backend
         self.modelContainer = modelContainer
         self.history = history
         self.workflow = workflow
+        self.musicImporter = musicImporter
     }
 
     static func live() throws -> SetlistAppEnvironment {

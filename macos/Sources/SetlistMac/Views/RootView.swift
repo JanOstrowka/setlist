@@ -69,7 +69,8 @@ struct RootView: View {
             } else {
                 WorkflowDetailView(
                     workflow: environment.workflow,
-                    records: environment.history.records
+                    records: environment.history.records,
+                    musicImporter: environment.musicImporter
                 )
             }
         }
@@ -83,6 +84,7 @@ struct RootView: View {
 private struct WorkflowDetailView: View {
     let workflow: WorkflowController
     let records: [HistoryRecord]
+    let musicImporter: any MusicImporting
 
     var body: some View {
         switch workflow.state {
@@ -102,19 +104,13 @@ private struct WorkflowDetailView: View {
             ProcessingView(workflow: workflow, processing: processing)
                 .transition(.opacity)
         case .completed(let completed):
-            MilestoneStatusView(
-                eyebrow: "COMPLETE",
-                title: "The set is on disk",
-                detail: completed.outputPaths.isEmpty
-                    ? "Processing finished."
-                    : "\(completed.outputPaths.count) output file\(completed.outputPaths.count == 1 ? "" : "s") saved.",
-                status: completed.completedAt.formatted(
-                    date: .abbreviated,
-                    time: .shortened
-                ),
-                actionTitle: "Start Another Set",
-                action: workflow.startOver
+            CompletionView(
+                workflow: workflow,
+                completed: completed,
+                record: records.first { $0.id == completed.recordID },
+                importer: musicImporter
             )
+            .transition(.opacity)
         case .failed(let failure):
             let record = failure.recordID.flatMap { id in
                 records.first { $0.id == id }
