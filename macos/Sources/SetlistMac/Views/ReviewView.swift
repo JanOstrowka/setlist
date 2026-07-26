@@ -33,11 +33,17 @@ struct ReviewView: View {
                         rightColumn
                             .frame(maxWidth: .infinity)
                     }
-
-                    footer
                 }
                 .frame(maxWidth: SetlistTheme.contentWidth, alignment: .leading)
                 .padding(SetlistTheme.detailPadding)
+            }
+            .safeAreaInset(edge: .bottom) {
+                // Pinned above the fold: the primary action is always
+                // visible while the review content scrolls behind it.
+                footer
+                    .frame(maxWidth: SetlistTheme.contentWidth)
+                    .padding(.horizontal, SetlistTheme.detailPadding)
+                    .padding(.bottom, 18)
             }
         }
         .task(id: draft.historyID) {
@@ -139,15 +145,16 @@ struct ReviewView: View {
                         await workflow.process()
                     }
                 } label: {
-                    Label("Produce the Set", systemImage: "waveform")
+                    Label("Download", systemImage: "arrow.down.circle.fill")
                         .font(.body.weight(.semibold))
-                        .padding(.horizontal, 6)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 2)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(SetlistTheme.cherry)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!draft.canStartProcessing)
+                .accessibilityLabel("Download the set")
             }
             .padding(14)
             .glassEffect(
