@@ -240,6 +240,38 @@ final class WorkflowController {
         progressTask?.cancel()
     }
 
+    /// Cancels active work ahead of app termination and waits a bounded
+    /// time for the backend cancel to be delivered and persisted. Anything
+    /// still in flight after the timeout is recovered on the next launch
+    /// via `markActiveJobsInterrupted`.
+    func prepareForTermination(timeout: Duration = .seconds(3)) async {
+        if case .processing = state {
+            let task = progressTask
+            progressTask?.cancel()
+            if let task {
+                await Self.wait(for: task, upTo: timeout)
+            }
+            return
+        }
+        try? cancelActiveWorkForNewResolve()
+    }
+
+    private nonisolated static func wait(
+        for task: Task<Void, Never>,
+        upTo timeout: Duration
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                await task.value
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+            }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
     @discardableResult
     func startProcessing() -> Task<Void, Never>? {
         guard case .reviewing(let draft) = state else {

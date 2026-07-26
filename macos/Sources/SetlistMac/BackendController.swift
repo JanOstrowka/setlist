@@ -34,6 +34,18 @@ enum BackendStatus: Equatable {
     }
 }
 
+/// Identity payload returned by the backend's `/health` endpoint. Attaching
+/// requires a matching identity so an unrelated server that happens to hold
+/// the port is never mistaken for the Setlist engine.
+struct BackendHealth: Codable, Equatable, Sendable {
+    let status: String
+    let app: String
+
+    var isCompatibleSetlistEngine: Bool {
+        status == "ok" && app == "Setlist"
+    }
+}
+
 @MainActor
 final class BackendController: ObservableObject {
     static let shared: BackendController = {
@@ -44,7 +56,7 @@ final class BackendController: ObservableObject {
         )
     }()
 
-    typealias HealthCheck = (URL) async -> Bool
+    typealias HealthCheck = (URL) async -> BackendHealth?
     typealias Launcher = (BackendConfiguration) throws -> Process
 
     @Published private(set) var status: BackendStatus = .idle
@@ -79,7 +91,7 @@ final class BackendController: ObservableObject {
         }
 
         status = .starting
-        if await healthCheck(configuration.healthURL) {
+        if await compatibleEngineResponds() {
             ownsBackend = false
             status = .ready
             return
@@ -99,7 +111,7 @@ final class BackendController: ObservableObject {
             if retryDelayNanoseconds > 0 {
                 try? await Task.sleep(nanoseconds: retryDelayNanoseconds)
             }
-            if await healthCheck(configuration.healthURL) {
+            if await compatibleEngineResponds() {
                 status = .ready
                 return
             }
@@ -133,11 +145,18 @@ final class BackendController: ObservableObject {
 
         process = nil
         ownsBackend = false
-        if await healthCheck(configuration.healthURL) {
+        if await compatibleEngineResponds() {
             status = .ready
         } else {
             status = .failed("The local server exited unexpectedly.")
         }
+    }
+
+    private func compatibleEngineResponds() async -> Bool {
+        guard let health = await healthCheck(configuration.healthURL) else {
+            return false
+        }
+        return health.isCompatibleSetlistEngine
     }
 
     private func observeTermination(of process: Process) {
@@ -148,15 +167,18 @@ final class BackendController: ObservableObject {
         }
     }
 
-    nonisolated private static func checkHealth(url: URL) async -> Bool {
+    nonisolated private static func checkHealth(url: URL) async -> BackendHealth? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 1
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            return (response as? HTTPURLResponse)?.statusCode == 200
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                return nil
+            }
+            return try JSONDecoder().decode(BackendHealth.self, from: data)
         } catch {
-            return false
+            return nil
         }
     }
 

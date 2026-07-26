@@ -85,7 +85,7 @@ final class LandingIntentTests: XCTestCase {
             configuration: BackendConfiguration(
                 projectRoot: URL(fileURLWithPath: "/tmp/setlist-tests")
             ),
-            healthCheck: { _ in false },
+            healthCheck: { _ in nil },
             launcher: { _ in Process() },
             retryAttempts: 0
         )

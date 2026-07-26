@@ -930,6 +930,73 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertEqual(history.records.map(\.status), [.interrupted, .interrupted])
     }
 
+    func testCancelProcessingCancelsBackendAndPersistsCancelled() async throws {
+        let streamProbe = StreamProbe()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) },
+            job: { _ in .cancelled(jobID: "job-1") },
+            cancel: { _ in .cancelled(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
+        await controller.resolve("source")
+        let processing = Task { await controller.process() }
+        try await waitUntil { await streamProbe.didStart }
+
+        controller.cancelProcessing()
+        await processing.value
+
+        let cancelRequests = await api.cancelRequestsSnapshot()
+        XCTAssertEqual(cancelRequests, ["job-1"])
+        XCTAssertEqual(history.records.first?.status, .cancelled)
+    }
+
+    func testPrepareForTerminationCancelsProcessingWithinBudget() async throws {
+        let streamProbe = StreamProbe()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) },
+            job: { _ in .cancelled(jobID: "job-1") },
+            cancel: { _ in .cancelled(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
+        await controller.resolve("source")
+        controller.startProcessing()
+        try await waitUntil { await streamProbe.didStart }
+
+        await controller.prepareForTermination(timeout: .seconds(5))
+
+        let cancelRequests = await api.cancelRequestsSnapshot()
+        XCTAssertEqual(cancelRequests, ["job-1"])
+        XCTAssertEqual(history.records.first?.status, .cancelled)
+    }
+
+    func testPrepareForTerminationMarksReviewingRecordInterrupted() async throws {
+        let api = StubAPI(resolve: { _ in .fixture(videoID: "video") })
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+        guard case .reviewing = controller.state else {
+            return XCTFail("Expected reviewing state")
+        }
+
+        await controller.prepareForTermination()
+
+        XCTAssertEqual(history.records.first?.status, .interrupted)
+    }
+
     private func makeHistory() throws -> HistoryStore {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(

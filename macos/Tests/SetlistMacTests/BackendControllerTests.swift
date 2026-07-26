@@ -11,7 +11,7 @@ final class BackendControllerTests: XCTestCase {
         var didLaunch = false
         let controller = BackendController(
             configuration: configuration,
-            healthCheck: { _ in true },
+            healthCheck: { _ in .setlistOK },
             launcher: { _ in
                 didLaunch = true
                 return Process()
@@ -36,7 +36,7 @@ final class BackendControllerTests: XCTestCase {
             configuration: configuration,
             healthCheck: { _ in
                 healthChecks += 1
-                return healthChecks > 1
+                return healthChecks > 1 ? .setlistOK : nil
             },
             launcher: { _ in
                 didLaunch = true
@@ -52,6 +52,57 @@ final class BackendControllerTests: XCTestCase {
         XCTAssertTrue(didLaunch)
     }
 
+    func testRejectsUnrelatedHealthyServer() async {
+        let configuration = BackendConfiguration(
+            projectRoot: FileManager.default.temporaryDirectory
+        )
+        var didLaunch = false
+        let controller = BackendController(
+            configuration: configuration,
+            healthCheck: { _ in
+                BackendHealth(status: "ok", app: "SomethingElse")
+            },
+            launcher: { _ in
+                didLaunch = true
+                return Process()
+            },
+            retryDelayNanoseconds: 0,
+            retryAttempts: 1
+        )
+
+        await controller.start()
+
+        XCTAssertTrue(
+            didLaunch,
+            "An unrelated healthy server must not be adopted as the engine"
+        )
+        XCTAssertNotEqual(controller.status, .ready)
+    }
+
+    func testRejectsUnhealthyStatusFromSetlistEngine() async {
+        let configuration = BackendConfiguration(
+            projectRoot: FileManager.default.temporaryDirectory
+        )
+        var didLaunch = false
+        let controller = BackendController(
+            configuration: configuration,
+            healthCheck: { _ in
+                BackendHealth(status: "degraded", app: "Setlist")
+            },
+            launcher: { _ in
+                didLaunch = true
+                return Process()
+            },
+            retryDelayNanoseconds: 0,
+            retryAttempts: 1
+        )
+
+        await controller.start()
+
+        XCTAssertTrue(didLaunch)
+        XCTAssertNotEqual(controller.status, .ready)
+    }
+
     func testReportsFailureWhenOwnedBackendTerminates() async {
         let configuration = BackendConfiguration(
             projectRoot: FileManager.default.temporaryDirectory
@@ -61,7 +112,7 @@ final class BackendControllerTests: XCTestCase {
             configuration: configuration,
             healthCheck: { _ in
                 healthChecks += 1
-                return healthChecks == 2
+                return healthChecks == 2 ? .setlistOK : nil
             },
             launcher: { _ in Process() },
             retryDelayNanoseconds: 0,
@@ -78,4 +129,16 @@ final class BackendControllerTests: XCTestCase {
         )
         XCTAssertFalse(controller.ownsBackend)
     }
+
+    func testHealthResponseDecodesBackendPayload() throws {
+        let payload = Data(#"{"status": "ok", "app": "Setlist"}"#.utf8)
+
+        let health = try JSONDecoder().decode(BackendHealth.self, from: payload)
+
+        XCTAssertTrue(health.isCompatibleSetlistEngine)
+    }
+}
+
+private extension BackendHealth {
+    static let setlistOK = BackendHealth(status: "ok", app: "Setlist")
 }

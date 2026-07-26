@@ -58,6 +58,7 @@ struct SetlistMacApp: App {
         } catch {
             fatalError("Could not create Setlist storage: \(error)")
         }
+        AppDelegate.environment = environment
     }
 
     var body: some Scene {
