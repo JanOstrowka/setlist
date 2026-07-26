@@ -31,6 +31,8 @@ struct RootView: View {
             detail
                 .frame(minWidth: 700, minHeight: 560)
         }
+        .background(SetlistTheme.obsidian)
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task {
             await backend.start()
         }

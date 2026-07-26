@@ -14,12 +14,14 @@ struct RecentSidebar: View {
             } label: {
                 HStack {
                     Image(systemName: "plus")
+                        .foregroundStyle(SetlistTheme.cherry)
                     Text("New Set")
                         .fontWeight(.semibold)
+                        .foregroundStyle(SetlistTheme.paper)
                     Spacer()
                     Text("⌘N")
                         .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(SetlistTheme.mutedPaper.opacity(0.6))
                 }
                 .contentShape(.rect)
             }
@@ -29,19 +31,21 @@ struct RecentSidebar: View {
             .accessibilityHint("Starts a new YouTube set")
 
             Divider()
+                .overlay(SetlistTheme.hairline)
 
             List(selection: $selection) {
-                Section("Recent") {
+                Section {
                     if records.isEmpty {
                         VStack(alignment: .leading, spacing: 7) {
                             Text("Your shelf is empty")
                                 .font(.callout.weight(.medium))
+                                .foregroundStyle(SetlistTheme.paper)
                             Text(
                                 "Resolved and finished sets will stay "
                                     + "here for quick access."
                             )
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(SetlistTheme.mutedPaper)
                             .fixedSize(horizontal: false, vertical: true)
                         }
                         .padding(.vertical, 18)
@@ -52,10 +56,17 @@ struct RecentSidebar: View {
                                 .tag(record.id)
                         }
                     }
+                } header: {
+                    Text("RECENT")
+                        .font(.caption2.weight(.semibold))
+                        .tracking(1.8)
+                        .foregroundStyle(SetlistTheme.mutedPaper.opacity(0.65))
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
         }
+        .background(SetlistTheme.warmBlack)
         .navigationTitle("Setlist")
     }
 }
@@ -94,6 +105,7 @@ private struct RecentRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(displayTitle)
                     .font(.callout.weight(.medium))
+                    .foregroundStyle(SetlistTheme.paper)
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
@@ -109,7 +121,7 @@ private struct RecentRow: View {
                     }
                 }
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(SetlistTheme.mutedPaper)
 
                 Text(record.status.sidebarTitle)
                     .font(.caption2.weight(.semibold))

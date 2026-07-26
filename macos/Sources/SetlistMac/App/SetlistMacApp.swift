@@ -65,6 +65,8 @@ struct SetlistMacApp: App {
         Window("Setlist", id: "setlist") {
             RootView(environment: environment)
                 .modelContainer(environment.modelContainer)
+                .preferredColorScheme(.dark)
+                .tint(SetlistTheme.cherry)
         }
         .defaultSize(width: 1_180, height: 820)
         .windowResizability(.contentMinSize)

@@ -200,7 +200,10 @@ struct LandingView: View {
             }
         }
         .padding(18)
-        .glassEffect(.regular, in: .rect(cornerRadius: 26))
+        .glassEffect(
+            .regular.tint(SetlistTheme.warmBlack.opacity(0.7)),
+            in: .rect(cornerRadius: 26)
+        )
     }
 
     private func pasteFromClipboard() {
