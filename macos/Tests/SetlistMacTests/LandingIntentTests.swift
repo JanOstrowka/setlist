@@ -34,6 +34,20 @@ final class LandingIntentTests: XCTestCase {
         XCTAssertFalse(YouTubeURLValidator.isValid("not a url"))
     }
 
+    func testVideoIDExtractionIgnoresTimestampsAndPlaylistExtras() {
+        XCTAssertEqual(
+            YouTubeURLValidator.videoID(
+                from: "https://www.youtube.com/watch?v=S1L8cNyfXT4&t=843s"
+            ),
+            "S1L8cNyfXT4"
+        )
+        XCTAssertEqual(
+            YouTubeURLValidator.videoID(from: "https://youtu.be/S1L8cNyfXT4?t=12"),
+            "S1L8cNyfXT4"
+        )
+        XCTAssertNil(YouTubeURLValidator.videoID(from: "https://example.com/video"))
+    }
+
     func testLandingSubmissionTrimsValidURL() {
         let intent = LandingSubmission.intent(
             for: "  https://youtu.be/abcdefghijk  "

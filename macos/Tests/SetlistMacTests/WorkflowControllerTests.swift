@@ -65,6 +65,52 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertNotNil(record.tracklistJSON)
     }
 
+    func testResolvingSameVideoReusesExistingRecordInsteadOfDuplicating() async throws {
+        let api = StubAPI(resolve: { _ in .fixture(videoID: "S1L8cNyfXT4") })
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+
+        await controller.resolve("https://www.youtube.com/watch?v=S1L8cNyfXT4")
+        let firstRecordID = try XCTUnwrap(history.records.first).id
+
+        // Same video, different URL extras (timestamp).
+        await controller.resolve(
+            "https://www.youtube.com/watch?v=S1L8cNyfXT4&t=843s"
+        )
+
+        XCTAssertEqual(history.records.count, 1)
+        let record = try XCTUnwrap(history.records.first)
+        XCTAssertEqual(record.id, firstRecordID)
+        XCTAssertEqual(record.status, .reviewing)
+        XCTAssertEqual(
+            record.sourceURL,
+            "https://www.youtube.com/watch?v=S1L8cNyfXT4&t=843s"
+        )
+    }
+
+    func testResolvingExistingVideoMovesItsRecordToTopOfRecent() async throws {
+        let api = StubAPI(resolve: { url in
+            .fixture(videoID: YouTubeURLValidator.videoID(from: url) ?? "unknown")
+        })
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+
+        await controller.resolve("https://youtu.be/aaaaaaaaaaa")
+        await controller.resolve("https://youtu.be/bbbbbbbbbbb")
+        XCTAssertEqual(
+            history.records.map(\.videoID),
+            ["bbbbbbbbbbb", "aaaaaaaaaaa"]
+        )
+
+        await controller.resolve("https://youtu.be/aaaaaaaaaaa")
+
+        XCTAssertEqual(history.records.count, 2)
+        XCTAssertEqual(
+            history.records.map(\.videoID),
+            ["aaaaaaaaaaa", "bbbbbbbbbbb"]
+        )
+    }
+
     func testResolveFailureIsPersisted() async throws {
         let api = StubAPI(resolve: { _ in throw StubError.resolveFailed })
         let history = try makeHistory()
@@ -1220,6 +1266,10 @@ private final class RecordingHistoryStore: HistoryStoreProtocol {
 
     func insert(_ record: HistoryRecord) throws {
         try base.insert(record)
+    }
+
+    func promote(_ record: HistoryRecord) {
+        base.promote(record)
     }
 
     func save() throws {

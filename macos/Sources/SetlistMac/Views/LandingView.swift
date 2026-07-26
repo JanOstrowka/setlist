@@ -4,41 +4,54 @@ import SwiftUI
 
 enum YouTubeURLValidator {
     static func isValid(_ value: String) -> Bool {
+        videoID(from: value) != nil
+    }
+
+    /// Extracts the canonical 11-character video ID, ignoring extras like
+    /// timestamps and playlist parameters. Used to recognize that two
+    /// pasted links point at the same set.
+    static func videoID(from value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let components = URLComponents(string: trimmed),
               components.scheme?.lowercased() == "https",
               let host = components.host?.lowercased() else {
-            return false
+            return nil
         }
 
         if host == "youtu.be" {
             guard let videoID = components.path
                 .split(separator: "/", omittingEmptySubsequences: true)
                 .first else {
-                return false
+                return nil
             }
-            return isValidVideoID(String(videoID))
+            return validated(String(videoID))
         }
 
         guard host == "youtube.com"
                 || host == "www.youtube.com"
                 || host == "m.youtube.com" else {
-            return false
+            return nil
         }
 
         if components.path == "/watch" {
             guard let videoID = components.queryItems?
                 .first(where: { $0.name == "v" })?
                 .value else {
-                return false
+                return nil
             }
-            return isValidVideoID(videoID)
+            return validated(videoID)
         }
 
         let segments = components.path.split(separator: "/")
-        return segments.count >= 2
-            && ["shorts", "live", "embed"].contains(String(segments[0]))
-            && isValidVideoID(String(segments[1]))
+        guard segments.count >= 2,
+              ["shorts", "live", "embed"].contains(String(segments[0])) else {
+            return nil
+        }
+        return validated(String(segments[1]))
+    }
+
+    private static func validated(_ value: String) -> String? {
+        isValidVideoID(value) ? value : nil
     }
 
     private static func isValidVideoID(_ value: String) -> Bool {

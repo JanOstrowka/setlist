@@ -3,20 +3,29 @@ import WebKit
 
 /// Drives the embedded YouTube player in `YouTubePlayerView`.
 ///
-/// The player loads `youtube-nocookie.com/embed` directly (with a Safari
-/// user agent) rather than hosting the IFrame API in local HTML: WKWebView
-/// sends no referer for `loadHTMLString` content, which YouTube rejects
-/// with "This video is unavailable" (error 152/153). Seeking drives the
-/// page's own `<video>` element.
+/// YouTube requires a valid HTTPS `Referer` header on embed requests and
+/// rejects players without one ("Video player configuration error",
+/// error 153). WKWebView sends no referer for local HTML or direct
+/// top-level loads, so the referer is attached to the request explicitly.
+/// Seeking drives the embed page's own `<video>` element.
 @MainActor
 @Observable
 final class YouTubePlayerController {
+    static let refererURL = "https://setlist.local/"
+
     @ObservationIgnored fileprivate weak var webView: WKWebView?
     private(set) var loadedVideoID: String?
 
     func load(videoID: String) {
         loadedVideoID = videoID
-        webView?.load(URLRequest(url: Self.embedURL(videoID: videoID)))
+        webView?.load(Self.embedRequest(videoID: videoID))
+    }
+
+    static func embedRequest(videoID: String) -> URLRequest {
+        var request = URLRequest(url: embedURL(videoID: videoID))
+        request.setValue(refererURL, forHTTPHeaderField: "Referer")
+        request.setValue(refererURL, forHTTPHeaderField: "Origin")
+        return request
     }
 
     func seek(to seconds: Double) {
@@ -32,7 +41,7 @@ final class YouTubePlayerController {
     static func embedURL(videoID: String) -> URL {
         var components = URLComponents()
         components.scheme = "https"
-        components.host = "www.youtube-nocookie.com"
+        components.host = "www.youtube.com"
         components.path = "/embed/\(videoID)"
         components.queryItems = [
             URLQueryItem(name: "playsinline", value: "1"),

@@ -10,6 +10,7 @@ final class WorkflowController {
     @ObservationIgnored private let history: any HistoryStoreProtocol
     @ObservationIgnored private let retryDelay: @Sendable (Duration) async -> Void
     @ObservationIgnored private let detachedCancellationAttemptLimit: Int
+    @ObservationIgnored private let minimumResolveDisplay: Duration
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var tracklistTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
@@ -24,7 +25,8 @@ final class WorkflowController {
         retryDelay: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
-        detachedCancellationAttemptLimit: Int = 8
+        detachedCancellationAttemptLimit: Int = 8,
+        minimumResolveDisplay: Duration = .zero
     ) {
         self.api = api
         self.history = history
@@ -33,6 +35,7 @@ final class WorkflowController {
             1,
             detachedCancellationAttemptLimit
         )
+        self.minimumResolveDisplay = minimumResolveDisplay
 
         do {
             try history.markActiveJobsInterrupted()
@@ -76,14 +79,34 @@ final class WorkflowController {
             return
         }
 
-        let record = HistoryRecord(
-            sourceURL: sourceURL,
-            status: .resolving,
-            stage: .resolving
-        )
+        let record: HistoryRecord
+        let isNewRecord: Bool
+        if let existing = existingRecord(matching: sourceURL) {
+            // The same set was resolved before: refresh it in place and
+            // move it to the top of Recent instead of duplicating it.
+            existing.sourceURL = sourceURL
+            existing.status = .resolving
+            existing.stage = .resolving
+            existing.errorSummary = nil
+            existing.backendJobID = nil
+            existing.completedAt = nil
+            existing.updatedAt = Date()
+            history.promote(existing)
+            record = existing
+            isNewRecord = false
+        } else {
+            record = HistoryRecord(
+                sourceURL: sourceURL,
+                status: .resolving,
+                stage: .resolving
+            )
+            isNewRecord = true
+        }
 
         do {
-            try history.insert(record)
+            if isNewRecord {
+                try history.insert(record)
+            }
             try history.save()
         } catch {
             state = .failed(
@@ -103,10 +126,20 @@ final class WorkflowController {
         let token = UUID()
         resolveToken = token
         let api = api
+        let retryDelay = retryDelay
+        let minimumResolveDisplay = minimumResolveDisplay
 
         let task = Task { [weak self] in
             do {
+                let clock = ContinuousClock()
+                let start = clock.now
                 let response = try await api.resolve(url: sourceURL)
+                // Let the resolving scene finish its phase animation even
+                // when the backend answers quickly.
+                let remaining = minimumResolveDisplay - start.duration(to: clock.now)
+                if remaining > .zero {
+                    await retryDelay(remaining)
+                }
                 try Task.checkCancellation()
                 guard let self, self.resolveToken == token else {
                     return
@@ -1283,6 +1316,28 @@ final class WorkflowController {
 
     private func record(id: UUID) -> HistoryRecord? {
         history.records.first { $0.id == id }
+    }
+
+    /// Finds a prior record for the same YouTube video regardless of URL
+    /// extras (timestamps, playlist parameters), so re-resolving a link
+    /// refreshes the existing Recent entry. Records that are mid-production
+    /// are never reused.
+    private func existingRecord(matching sourceURL: String) -> HistoryRecord? {
+        let incomingVideoID = YouTubeURLValidator.videoID(from: sourceURL)
+        return history.records.first { candidate in
+            guard candidate.status != .processing else {
+                return false
+            }
+            if let incomingVideoID {
+                if let candidateVideoID = candidate.videoID,
+                   !candidateVideoID.isEmpty {
+                    return candidateVideoID == incomingVideoID
+                }
+                return YouTubeURLValidator.videoID(from: candidate.sourceURL)
+                    == incomingVideoID
+            }
+            return candidate.sourceURL == sourceURL
+        }
     }
 
     private static func describe(_ error: any Error) -> String {

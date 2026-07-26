@@ -83,6 +83,60 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertNotNil(processing.errorSummary)
     }
 
+    func testPromoteMovesRecordToTopOfRecent() throws {
+        let store = try makeStore()
+        let older = HistoryRecord(sourceURL: "one", status: .reviewing)
+        let newer = HistoryRecord(sourceURL: "two", status: .reviewing)
+        try store.insert(older)
+        try store.insert(newer)
+
+        store.promote(older)
+
+        XCTAssertEqual(store.records.map(\.sourceURL), ["one", "two"])
+    }
+
+    func testLaunchCollapsesLeftoverDuplicatesKeepingNewestAndCompleted() throws {
+        let container = try makeContainer()
+        let seed = try HistoryStore(modelContext: ModelContext(container))
+        let url = "https://www.youtube.com/watch?v=S1L8cNyfXT4"
+        let completed = HistoryRecord(
+            sourceURL: url,
+            videoID: "S1L8cNyfXT4",
+            status: .completed,
+            outputPaths: ["/tmp/set.m4a"],
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let interruptedOld = HistoryRecord(
+            sourceURL: url + "&t=843s",
+            status: .interrupted,
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+        let reviewingNewest = HistoryRecord(
+            sourceURL: url,
+            videoID: "S1L8cNyfXT4",
+            status: .reviewing,
+            updatedAt: Date(timeIntervalSince1970: 300)
+        )
+        let unrelated = HistoryRecord(
+            sourceURL: "https://youtu.be/bbbbbbbbbbb",
+            status: .reviewing,
+            updatedAt: Date(timeIntervalSince1970: 250)
+        )
+        for record in [completed, interruptedOld, reviewingNewest, unrelated] {
+            try seed.insert(record)
+        }
+        try seed.save()
+
+        let store = try HistoryStore(modelContext: ModelContext(container))
+
+        // Newest duplicate survives, the interrupted copy is dropped, and
+        // the completed set keeps its files.
+        XCTAssertEqual(
+            store.records.map(\.id),
+            [reviewingNewest.id, unrelated.id, completed.id]
+        )
+    }
+
     private func makeStore() throws -> HistoryStore {
         try HistoryStore(modelContext: ModelContext(makeContainer()))
     }

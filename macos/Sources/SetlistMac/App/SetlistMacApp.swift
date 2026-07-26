@@ -32,7 +32,11 @@ final class SetlistAppEnvironment {
         let modelContainer = try makeHistoryContainer()
         let history = try HistoryStore(modelContext: modelContainer.mainContext)
         let api = SetlistAPI(baseURL: backend.configuration.baseURL)
-        let workflow = WorkflowController(api: api, history: history)
+        let workflow = WorkflowController(
+            api: api,
+            history: history,
+            minimumResolveDisplay: .seconds(2.6)
+        )
         return SetlistAppEnvironment(
             backend: backend,
             modelContainer: modelContainer,

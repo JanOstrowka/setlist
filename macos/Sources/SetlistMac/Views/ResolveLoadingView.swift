@@ -10,13 +10,6 @@ struct ResolveLoadingView: View {
         ResolvePresentation(reduceMotion: reduceMotion)
     }
 
-    /// The last phase ("Ready to review") only lights up when the resolve
-    /// actually finishes and this view is replaced, so the timed
-    /// progression holds on the phase before it.
-    private var lastTimedPhase: Int {
-        max(0, presentation.phases.count - 2)
-    }
-
     var body: some View {
         ZStack {
             SetlistDetailBackground()
@@ -54,18 +47,18 @@ struct ResolveLoadingView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Resolving YouTube set")
         .task {
-            // The backend resolve is one blocking call, so step through the
-            // phases on a timer to reflect the work that is actually
-            // happening, holding on the final in-flight phase.
-            while activePhase < lastTimedPhase {
-                try? await Task.sleep(for: .seconds(1.2))
+            // The backend resolve is one blocking call; the workflow holds
+            // this scene on screen for a minimum duration so every phase
+            // gets its moment, stepping one by one.
+            while activePhase < presentation.phases.count - 1 {
+                try? await Task.sleep(for: .seconds(0.65))
                 guard !Task.isCancelled else {
                     return
                 }
                 if reduceMotion {
                     activePhase += 1
                 } else {
-                    withAnimation(.easeInOut(duration: 0.35)) {
+                    withAnimation(.easeInOut(duration: 0.3)) {
                         activePhase += 1
                     }
                 }
