@@ -373,6 +373,49 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertEqual(history.records.first?.errorSummary, "disconnected")
     }
 
+    func testTerminalDoneWithJobNotFoundPreservesFallbackCompletion() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in
+                .events([
+                    .init(
+                        stage: .done,
+                        pct: 100,
+                        message: "Done",
+                        filePath: "/tmp/fallback.m4a"
+                    ),
+                ])
+            },
+            job: { _ in
+                throw SetlistAPIError.httpStatus(
+                    404,
+                    Data("missing".utf8)
+                )
+            }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in }
+        )
+        await controller.resolve("source")
+
+        await controller.process()
+
+        guard case .completed(let completed) = controller.state else {
+            return XCTFail("Expected authoritative completion")
+        }
+        XCTAssertEqual(completed.outputPaths, ["/tmp/fallback.m4a"])
+        XCTAssertEqual(history.records.first?.status, .completed)
+        XCTAssertEqual(history.records.first?.stage, .done)
+        XCTAssertTrue(
+            history.records.first?.errorSummary?
+                .localizedCaseInsensitiveContains("reconciliation") == true
+        )
+    }
+
     func testTerminalDonePollsNonterminalSnapshotUntilCompleted() async throws {
         let snapshots = SnapshotQueue([
             .processing(jobID: "job-1"),

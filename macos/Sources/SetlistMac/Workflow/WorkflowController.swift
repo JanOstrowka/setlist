@@ -379,12 +379,6 @@ final class WorkflowController {
                                 recordID: frozenDraft.historyID,
                                 message: message
                             )
-                        case .jobLost:
-                            try self?.applyJobLost(
-                                jobID: jobID,
-                                frozenDraft: frozenDraft,
-                                token: token
-                            )
                         case .cancelled:
                             let cancellation = await Self.cancelAndPoll(
                                 api: api,
@@ -792,7 +786,10 @@ final class WorkflowController {
                     return .cancelled
                 }
                 if isJobNotFound(error) {
-                    return .jobLost
+                    return .fallback(
+                        "Full output reconciliation was unavailable because "
+                            + "the completed backend job was not found."
+                    )
                 }
                 if attempt < 3 {
                     await retryDelay(backoff.next())
@@ -1239,7 +1236,6 @@ private enum BackendPollingOutcome: Sendable {
 private enum DoneReconciliationOutcome: Sendable {
     case completed(APIJobSnapshot)
     case fallback(String)
-    case jobLost
     case cancelled
 }
 
