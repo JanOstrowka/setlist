@@ -96,18 +96,8 @@ private struct WorkflowDetailView: View {
             ResolveLoadingView(sourceURL: phase.sourceURL)
                 .transition(.opacity)
         case .reviewing(let draft):
-            MilestoneStatusView(
-                eyebrow: "READY TO REVIEW",
-                title: draft.metadata.title.isEmpty
-                    ? "The set is ready"
-                    : draft.metadata.title,
-                detail: draft.metadata.artist.isEmpty
-                    ? "Metadata and tracklist are ready for review."
-                    : "\(draft.metadata.artist) · Metadata and tracklist are ready.",
-                status: "Review workspace",
-                actionTitle: "Start Another Set",
-                action: workflow.startOver
-            )
+            ReviewView(workflow: workflow, draft: draft)
+                .transition(.opacity)
         case .processing(let processing):
             MilestoneStatusView(
                 eyebrow: "IN PRODUCTION",
