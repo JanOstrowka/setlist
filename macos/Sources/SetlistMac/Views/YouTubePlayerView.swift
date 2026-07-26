@@ -16,9 +16,21 @@ final class YouTubePlayerController {
     @ObservationIgnored fileprivate weak var webView: WKWebView?
     private(set) var loadedVideoID: String?
 
+    /// Set when the rights holder blocks embedded playback for the loaded
+    /// video ("Video unavailable"); the UI swaps in a thumbnail fallback.
+    private(set) var unavailableReason: String?
+
     func load(videoID: String) {
         loadedVideoID = videoID
+        unavailableReason = nil
         webView?.load(Self.embedRequest(videoID: videoID))
+    }
+
+    func markUnavailable(reason: String) {
+        let cleaned = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        unavailableReason = cleaned.isEmpty
+            ? "This video cannot be played inside other apps."
+            : cleaned
     }
 
     static func embedRequest(videoID: String) -> URLRequest {
@@ -62,6 +74,53 @@ final class YouTubePlayerController {
         })();
         """
     }
+
+    static func thumbnailURL(videoID: String) -> URL {
+        URL(string: "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg")!
+    }
+
+    static func watchURL(videoID: String) -> URL {
+        URL(string: "https://www.youtube.com/watch?v=\(videoID)")!
+    }
+
+    /// Injected into the embed page: when YouTube shows its in-player
+    /// error panel (`.ytp-error`, e.g. a rights holder blocking embeds),
+    /// the reason is reported to the app so a native fallback can take
+    /// over.
+    static let errorProbeScript = """
+    (function () {
+        function reasonText() {
+            var parts = [];
+            var nodes = document.querySelectorAll(
+                '.ytp-error-content-wrap-reason, '
+                + '.ytp-error-content-wrap-subreason'
+            );
+            for (var i = 0; i < nodes.length; i++) {
+                var text = (nodes[i].textContent || '').trim();
+                if (text) { parts.push(text); }
+            }
+            return parts.join(' — ');
+        }
+        function report() {
+            if (!document.querySelector('.ytp-error')) { return false; }
+            try {
+                window.webkit.messageHandlers.setlistPlayer.postMessage({
+                    status: 'blocked',
+                    reason: reasonText()
+                });
+            } catch (err) {}
+            return true;
+        }
+        if (report()) { return; }
+        var observer = new MutationObserver(function () {
+            if (report()) { observer.disconnect(); }
+        });
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
+    })();
+    """
 }
 
 /// A WKWebView scoped to the YouTube embed player only. It never loads the
@@ -76,13 +135,24 @@ struct YouTubePlayerView: NSViewRepresentable {
     let controller: YouTubePlayerController
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(controller: controller)
     }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.userContentController.addUserScript(
+            WKUserScript(
+                source: YouTubePlayerController.errorProbeScript,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true
+            )
+        )
+        configuration.userContentController.add(
+            context.coordinator,
+            name: "setlistPlayer"
+        )
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -100,8 +170,35 @@ struct YouTubePlayerView: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController
+            .removeScriptMessageHandler(forName: "setlistPlayer")
+        webView.stopLoading()
+    }
+
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        private weak var controller: YouTubePlayerController?
+
+        init(controller: YouTubePlayerController) {
+            self.controller = controller
+        }
+
+        nonisolated func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            // WKScriptMessage is delivered on the main thread.
+            MainActor.assumeIsolated {
+                guard let body = message.body as? [String: Any],
+                      body["status"] as? String == "blocked" else {
+                    return
+                }
+                controller?.markUnavailable(
+                    reason: body["reason"] as? String ?? ""
+                )
+            }
+        }
         private static let allowedHostSuffixes = [
             "youtube.com",
             "youtube-nocookie.com",

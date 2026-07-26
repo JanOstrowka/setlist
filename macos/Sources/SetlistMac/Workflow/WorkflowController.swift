@@ -11,6 +11,7 @@ final class WorkflowController {
     @ObservationIgnored private let retryDelay: @Sendable (Duration) async -> Void
     @ObservationIgnored private let detachedCancellationAttemptLimit: Int
     @ObservationIgnored private let minimumResolveDisplay: Duration
+    @ObservationIgnored private let pageFetcher: (any TracklistPageFetching)?
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var tracklistTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
@@ -26,7 +27,8 @@ final class WorkflowController {
             try? await Task.sleep(for: duration)
         },
         detachedCancellationAttemptLimit: Int = 8,
-        minimumResolveDisplay: Duration = .zero
+        minimumResolveDisplay: Duration = .zero,
+        pageFetcher: (any TracklistPageFetching)? = nil
     ) {
         self.api = api
         self.history = history
@@ -36,6 +38,7 @@ final class WorkflowController {
             detachedCancellationAttemptLimit
         )
         self.minimumResolveDisplay = minimumResolveDisplay
+        self.pageFetcher = pageFetcher
 
         do {
             try history.markActiveJobsInterrupted()
@@ -198,20 +201,70 @@ final class WorkflowController {
         guard case .reviewing(let draft) = state else {
             return
         }
+        let pageFetcher = pageFetcher
         await runTracklistLookup(
             draft: draft,
             operation: { [api] in
-                try await api.autoTracklist(
+                let result = try await api.autoTracklist(
                     query: query,
                     url: draft.sourceURL,
                     duration: draft.duration
                 )
+                if !result.tracks.isEmpty {
+                    return result
+                }
+                // The backend search needs a Firecrawl key; without one it
+                // comes back empty. Fall back to an in-app search and an
+                // in-app render of the page — no key required.
+                guard let pageFetcher,
+                      let found = try? await pageFetcher.searchTracklistURL(
+                        query: query
+                      ) else {
+                    return result
+                }
+                do {
+                    let extracted = try await pageFetcher.fetchTracklistText(
+                        from: found
+                    )
+                    var tracklist = try await api.parseTracklist(
+                        text: extracted,
+                        duration: draft.duration
+                    )
+                    tracklist.note =
+                        "Found on 1001tracklists: \(found.absoluteString)"
+                    return tracklist
+                } catch {
+                    return result
+                }
             }
         )
     }
 
     func parseTracklist(_ text: String) async {
         guard case .reviewing(let draft) = state else {
+            return
+        }
+        // A pasted 1001tracklists URL is rendered inside the app; the
+        // extracted rows go through the same backend text parser as a
+        // pasted tracklist.
+        if let url = TracklistWebFetcher.pastedTracklistURL(from: text),
+           let pageFetcher {
+            await runTracklistLookup(
+                draft: draft,
+                operation: { [api] in
+                    let extracted = try await pageFetcher.fetchTracklistText(
+                        from: url
+                    )
+                    var tracklist = try await api.parseTracklist(
+                        text: extracted,
+                        duration: draft.duration
+                    )
+                    tracklist.note =
+                        "Fetched \(tracklist.tracks.count) tracks "
+                        + "from 1001tracklists."
+                    return tracklist
+                }
+            )
             return
         }
         await runTracklistLookup(

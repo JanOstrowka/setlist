@@ -156,6 +156,107 @@ final class WorkflowControllerTests: XCTestCase {
         )
     }
 
+    func testPasting1001TracklistsURLRendersPageInApp() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            parseTracklist: { text, _ in
+                APITracklist(
+                    source: .manual,
+                    tracks: [.init(start: 0, title: text)]
+                )
+            }
+        )
+        let fetcher = StubPageFetcher(pageText: "0:00 Artist - Extracted")
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            pageFetcher: fetcher
+        )
+        await controller.resolve("source")
+
+        let pastedURL = "https://www.1001tracklists.com/tracklist/2hm37f8t/"
+            + "john-summit-savaya-bali-indonesia-2023-10-10.html"
+        await controller.parseTracklist(pastedURL)
+
+        guard case .reviewing(let draft) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        // The backend parser received the in-app extracted rows, not the URL.
+        XCTAssertEqual(
+            draft.tracklist.tracks.map(\.title),
+            ["0:00 Artist - Extracted"]
+        )
+        XCTAssertEqual(
+            fetcher.fetchedURLs.map(\.absoluteString),
+            [pastedURL]
+        )
+        XCTAssertTrue(draft.tracklist.note.contains("1001tracklists"))
+    }
+
+    func testAutoTracklistFallsBackToInAppSearchWhenBackendComesUpEmpty() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            autoTracklist: { _, _, _ in
+                APITracklist(source: .none, note: "No matching page found.")
+            },
+            parseTracklist: { _, _ in
+                APITracklist(
+                    source: .manual,
+                    tracks: [.init(start: 0, title: "Found Track")]
+                )
+            }
+        )
+        let found = URL(
+            string: "https://www.1001tracklists.com/tracklist/2hm37f8t/set.html"
+        )!
+        let fetcher = StubPageFetcher(
+            searchResult: found,
+            pageText: "0:00 Artist - Found Track"
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            pageFetcher: fetcher
+        )
+        await controller.resolve("source")
+
+        await controller.autoTracklist(query: "John Summit Savaya")
+
+        guard case .reviewing(let draft) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        XCTAssertEqual(draft.tracklist.tracks.map(\.title), ["Found Track"])
+        XCTAssertEqual(fetcher.searchedQueries, ["John Summit Savaya"])
+        XCTAssertEqual(fetcher.fetchedURLs, [found])
+        XCTAssertTrue(draft.tracklist.note.contains(found.absoluteString))
+    }
+
+    func testAutoTracklistKeepsBackendResultWhenItHasTracks() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            autoTracklist: { _, _, _ in .named("Backend Track") }
+        )
+        let fetcher = StubPageFetcher(pageText: "unused")
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            pageFetcher: fetcher
+        )
+        await controller.resolve("source")
+
+        await controller.autoTracklist(query: "query")
+
+        guard case .reviewing(let draft) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        XCTAssertEqual(draft.tracklist.tracks.map(\.title), ["Backend Track"])
+        XCTAssertTrue(fetcher.searchedQueries.isEmpty)
+        XCTAssertTrue(fetcher.fetchedURLs.isEmpty)
+    }
+
     func testOnlyLatestTracklistTaskCanMutateDraft() async throws {
         let tracklistGate = ValueGate<APITracklist>()
         let api = StubAPI(
@@ -1248,6 +1349,29 @@ private actor StubAPI: SetlistAPIProtocol {
 
     func cancelRequestsSnapshot() -> [String] {
         cancelRequests
+    }
+}
+
+@MainActor
+private final class StubPageFetcher: TracklistPageFetching {
+    private let searchResult: URL?
+    private let pageText: String
+    private(set) var searchedQueries: [String] = []
+    private(set) var fetchedURLs: [URL] = []
+
+    init(searchResult: URL? = nil, pageText: String) {
+        self.searchResult = searchResult
+        self.pageText = pageText
+    }
+
+    func searchTracklistURL(query: String) async throws -> URL? {
+        searchedQueries.append(query)
+        return searchResult
+    }
+
+    func fetchTracklistText(from url: URL) async throws -> String {
+        fetchedURLs.append(url)
+        return pageText
     }
 }
 

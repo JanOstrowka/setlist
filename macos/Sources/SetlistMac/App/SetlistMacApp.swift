@@ -35,7 +35,8 @@ final class SetlistAppEnvironment {
         let workflow = WorkflowController(
             api: api,
             history: history,
-            minimumResolveDisplay: .seconds(2.6)
+            minimumResolveDisplay: .seconds(2.6),
+            pageFetcher: TracklistWebFetcher()
         )
         return SetlistAppEnvironment(
             backend: backend,

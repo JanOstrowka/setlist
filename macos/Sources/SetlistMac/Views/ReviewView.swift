@@ -70,14 +70,23 @@ struct ReviewView: View {
 
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: 16) {
-            YouTubePlayerView(videoID: draft.videoID, controller: player)
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(SetlistTheme.hairline, lineWidth: 1)
-                )
-                .accessibilityLabel("YouTube preview player")
+            Group {
+                if let reason = player.unavailableReason {
+                    BlockedVideoFallback(
+                        videoID: draft.videoID,
+                        reason: reason
+                    )
+                } else {
+                    YouTubePlayerView(videoID: draft.videoID, controller: player)
+                        .accessibilityLabel("YouTube preview player")
+                }
+            }
+            .aspectRatio(16 / 9, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(SetlistTheme.hairline, lineWidth: 1)
+            )
 
             MetadataEditor(draft: draftBinding)
         }
@@ -169,5 +178,71 @@ struct ReviewView: View {
                 query: query.isEmpty ? draft.detectedLine : query
             )
         }
+    }
+}
+
+/// Shown in place of the embed player when the rights holder blocks
+/// embedded playback: the video thumbnail with the block reason and a
+/// jump to YouTube, where the video still plays.
+private struct BlockedVideoFallback: View {
+    let videoID: String
+    let reason: String
+
+    var body: some View {
+        ZStack {
+            AsyncImage(
+                url: YouTubePlayerController.thumbnailURL(videoID: videoID)
+            ) { image in
+                image
+                    .resizable()
+                    .scaledToFill()
+            } placeholder: {
+                SetlistTheme.warmBlack
+            }
+
+            LinearGradient(
+                colors: [.black.opacity(0.25), .black.opacity(0.82)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(spacing: 10) {
+                Spacer()
+
+                Image(systemName: "play.slash.fill")
+                    .font(.title2)
+                    .foregroundStyle(SetlistTheme.mutedPaper)
+
+                Text("Preview blocked by the rights holder")
+                    .font(.headline)
+                    .foregroundStyle(SetlistTheme.paper)
+
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(SetlistTheme.mutedPaper)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .padding(.horizontal, 24)
+
+                Button {
+                    NSWorkspace.shared.open(
+                        YouTubePlayerController.watchURL(videoID: videoID)
+                    )
+                } label: {
+                    Label("Watch on YouTube", systemImage: "arrow.up.forward")
+                        .font(.callout.weight(.medium))
+                }
+                .buttonStyle(.bordered)
+                .tint(SetlistTheme.paper)
+                .padding(.top, 4)
+
+                Spacer()
+            }
+            .padding(16)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Video preview unavailable: \(reason). Watch on YouTube instead."
+        )
     }
 }
