@@ -4,9 +4,17 @@ struct ResolveLoadingView: View {
     let sourceURL: String
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var activePhase = 0
 
     private var presentation: ResolvePresentation {
         ResolvePresentation(reduceMotion: reduceMotion)
+    }
+
+    /// The last phase ("Ready to review") only lights up when the resolve
+    /// actually finishes and this view is replaced, so the timed
+    /// progression holds on the phase before it.
+    private var lastTimedPhase: Int {
+        max(0, presentation.phases.count - 2)
     }
 
     var body: some View {
@@ -45,6 +53,24 @@ struct ResolveLoadingView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Resolving YouTube set")
+        .task {
+            // The backend resolve is one blocking call, so step through the
+            // phases on a timer to reflect the work that is actually
+            // happening, holding on the final in-flight phase.
+            while activePhase < lastTimedPhase {
+                try? await Task.sleep(for: .seconds(1.2))
+                guard !Task.isCancelled else {
+                    return
+                }
+                if reduceMotion {
+                    activePhase += 1
+                } else {
+                    withAnimation(.easeInOut(duration: 0.35)) {
+                        activePhase += 1
+                    }
+                }
+            }
+        }
     }
 
     private var artworkSkeleton: some View {
@@ -70,35 +96,52 @@ struct ResolveLoadingView: View {
             ForEach(Array(presentation.phases.enumerated()), id: \.element.id) {
                 index,
                 phase in
+                let isDone = index < activePhase
+                let isActive = index == activePhase
                 HStack(alignment: .top, spacing: 16) {
                     VStack(spacing: 0) {
                         ZStack {
-                            Circle()
-                                .stroke(
-                                    index == 0
-                                        ? SetlistTheme.cherry
-                                        : SetlistTheme.hairline,
-                                    lineWidth: 1.5
-                                )
-                                .frame(width: 18, height: 18)
-                            if index == 0 {
+                            if isDone {
                                 Circle()
                                     .fill(SetlistTheme.cherry)
-                                    .frame(width: 6, height: 6)
+                                    .frame(width: 18, height: 18)
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(SetlistTheme.obsidian)
+                                    .transition(.scale.combined(with: .opacity))
+                            } else {
+                                Circle()
+                                    .stroke(
+                                        isActive
+                                            ? SetlistTheme.cherry
+                                            : SetlistTheme.hairline,
+                                        lineWidth: 1.5
+                                    )
+                                    .frame(width: 18, height: 18)
+                                if isActive {
+                                    PulsingDot(
+                                        animated: presentation.shimmerEnabled
+                                    )
+                                }
                             }
                         }
+                        .frame(width: 18, height: 18)
 
                         if index < presentation.phases.count - 1 {
                             Rectangle()
-                                .fill(SetlistTheme.hairline)
-                                .frame(width: 1, height: 35)
+                                .fill(
+                                    isDone
+                                        ? SetlistTheme.cherry.opacity(0.7)
+                                        : SetlistTheme.hairline
+                                )
+                                .frame(width: 1.5, height: 35)
                         }
                     }
 
                     Text(phase.title)
-                        .font(.body.weight(index == 0 ? .semibold : .regular))
+                        .font(.body.weight(isActive ? .semibold : .regular))
                         .foregroundStyle(
-                            index == 0
+                            isDone || isActive
                                 ? SetlistTheme.paper
                                 : SetlistTheme.mutedPaper.opacity(0.7)
                         )
@@ -106,9 +149,34 @@ struct ResolveLoadingView: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(phase.title)
-                .accessibilityValue(index == 0 ? "In progress" : "Pending")
+                .accessibilityValue(
+                    isDone ? "Done" : isActive ? "In progress" : "Pending"
+                )
             }
         }
+    }
+}
+
+private struct PulsingDot: View {
+    let animated: Bool
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(SetlistTheme.cherry)
+            .frame(width: 6, height: 6)
+            .scaleEffect(pulsing ? 1.5 : 1)
+            .opacity(pulsing ? 0.55 : 1)
+            .onAppear {
+                guard animated else {
+                    return
+                }
+                withAnimation(
+                    .easeInOut(duration: 0.7).repeatForever(autoreverses: true)
+                ) {
+                    pulsing = true
+                }
+            }
     }
 }
 

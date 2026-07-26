@@ -1,7 +1,13 @@
 import SwiftUI
 import WebKit
 
-/// Drives the scoped YouTube IFrame player embedded in `YouTubePlayerView`.
+/// Drives the embedded YouTube player in `YouTubePlayerView`.
+///
+/// The player loads `youtube-nocookie.com/embed` directly (with a Safari
+/// user agent) rather than hosting the IFrame API in local HTML: WKWebView
+/// sends no referer for `loadHTMLString` content, which YouTube rejects
+/// with "This video is unavailable" (error 152/153). Seeking drives the
+/// page's own `<video>` element.
 @MainActor
 @Observable
 final class YouTubePlayerController {
@@ -10,10 +16,7 @@ final class YouTubePlayerController {
 
     func load(videoID: String) {
         loadedVideoID = videoID
-        webView?.evaluateJavaScript(
-            "loadVideo(\(Self.javaScriptString(videoID)));",
-            completionHandler: nil
-        )
+        webView?.load(URLRequest(url: Self.embedURL(videoID: videoID)))
     }
 
     func seek(to seconds: Double) {
@@ -21,22 +24,45 @@ final class YouTubePlayerController {
             return
         }
         webView?.evaluateJavaScript(
-            "seekTo(\(seconds));",
+            Self.seekScript(seconds: seconds),
             completionHandler: nil
         )
     }
 
-    static func javaScriptString(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
+    static func embedURL(videoID: String) -> URL {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "www.youtube-nocookie.com"
+        components.path = "/embed/\(videoID)"
+        components.queryItems = [
+            URLQueryItem(name: "playsinline", value: "1"),
+            URLQueryItem(name: "rel", value: "0"),
+            URLQueryItem(name: "modestbranding", value: "1"),
+        ]
+        return components.url!
+    }
+
+    static func seekScript(seconds: Double) -> String {
+        """
+        (function () {
+            var video = document.querySelector('video');
+            if (!video) { return; }
+            video.currentTime = \(seconds);
+            var playing = video.play();
+            if (playing && playing.catch) { playing.catch(function () {}); }
+        })();
+        """
     }
 }
 
-/// A WKWebView scoped to the YouTube IFrame player only. It never loads the
+/// A WKWebView scoped to the YouTube embed player only. It never loads the
 /// Setlist web application and cancels navigation away from player origins.
 struct YouTubePlayerView: NSViewRepresentable {
+    static let safariUserAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        + "Version/17.4 Safari/605.1.15"
+
     let videoID: String
     let controller: YouTubePlayerController
 
@@ -51,60 +77,18 @@ struct YouTubePlayerView: NSViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.customUserAgent = Self.safariUserAgent
         webView.setValue(false, forKey: "drawsBackground")
-        webView.loadHTMLString(
-            Self.playerHTML(videoID: videoID),
-            baseURL: URL(string: "https://www.youtube.com")
-        )
         controller.webView = webView
+        controller.load(videoID: videoID)
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         controller.webView = webView
-        if controller.loadedVideoID != nil,
-           controller.loadedVideoID != videoID {
+        if controller.loadedVideoID != videoID {
             controller.load(videoID: videoID)
         }
-    }
-
-    static func playerHTML(videoID: String) -> String {
-        let escapedID = YouTubePlayerController.javaScriptString(videoID)
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-        html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
-        #player { width: 100%; height: 100%; }
-        </style>
-        </head>
-        <body>
-        <div id="player"></div>
-        <script src="https://www.youtube.com/iframe_api"></script>
-        <script>
-        var player = null;
-        var pendingVideoID = \(escapedID);
-        function onYouTubeIframeAPIReady() {
-            player = new YT.Player('player', {
-                videoId: pendingVideoID,
-                playerVars: { playsinline: 1, rel: 0, modestbranding: 1 }
-            });
-        }
-        function loadVideo(videoID) {
-            pendingVideoID = videoID;
-            if (player && player.cueVideoById) { player.cueVideoById(videoID); }
-        }
-        function seekTo(seconds) {
-            if (!player || !player.seekTo) { return; }
-            player.seekTo(seconds, true);
-            if (player.playVideo) { player.playVideo(); }
-        }
-        </script>
-        </body>
-        </html>
-        """
     }
 
     @MainActor
@@ -124,13 +108,21 @@ struct YouTubePlayerView: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
         ) {
-            guard let host = navigationAction.request.url?.host() else {
-                // Local player HTML has no host.
-                decisionHandler(.allow)
+            guard let url = navigationAction.request.url,
+                  let host = url.host() else {
+                decisionHandler(.cancel)
                 return
             }
             let allowed = Self.allowedHostSuffixes.contains { suffix in
                 host == suffix || host.hasSuffix("." + suffix)
+            }
+            // "Watch on YouTube" and similar links should not hijack the
+            // player pane; anything that is a full watch page opens in the
+            // browser instead.
+            if allowed, url.path.hasPrefix("/watch") {
+                NSWorkspace.shared.open(url)
+                decisionHandler(.cancel)
+                return
             }
             decisionHandler(allowed ? .allow : .cancel)
         }
