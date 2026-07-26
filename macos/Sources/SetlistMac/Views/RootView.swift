@@ -61,6 +61,12 @@ struct RootView: View {
             if let selectedRecord {
                 HistoryDetailView(
                     record: selectedRecord,
+                    importer: environment.musicImporter,
+                    markImported: {
+                        environment.workflow.markImported(
+                            recordID: selectedRecord.id
+                        )
+                    },
                     retry: { url in
                         environment.selectedRecordID = nil
                         Task {
@@ -219,61 +225,86 @@ private struct EngineFailureView: View {
 
 private struct HistoryDetailView: View {
     let record: HistoryRecord
+    let importer: any MusicImporting
+    let markImported: () -> Void
     let retry: (String) -> Void
 
     var body: some View {
         ZStack {
             SetlistDetailBackground()
 
-            VStack(alignment: .leading, spacing: 30) {
-                VStack(alignment: .leading, spacing: 11) {
-                    Text(record.status.sidebarTitle.uppercased())
-                        .font(.caption.weight(.semibold))
-                        .tracking(2.2)
-                        .foregroundStyle(record.status.tint)
+            if record.status == .completed {
+                // Finished sets get the full summary: Apple Music first,
+                // then the tracks and the YouTube source.
+                CompletedSetSummaryView(
+                    title: record.title.isEmpty
+                        ? "Untitled set"
+                        : record.title,
+                    artist: record.artist,
+                    videoID: record.videoID,
+                    sourceURL: record.sourceURL,
+                    outputPaths: record.outputPaths,
+                    completedAt: record.completedAt,
+                    note: record.errorSummary,
+                    alreadyImported: record.importedAt != nil,
+                    importer: importer,
+                    onImported: markImported
+                )
+            } else {
+                statusSummary
+            }
+        }
+    }
 
-                    Text(record.title.isEmpty ? "Untitled set" : record.title)
-                        .font(.system(size: 40, weight: .medium))
-                        .foregroundStyle(SetlistTheme.paper)
+    private var statusSummary: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            VStack(alignment: .leading, spacing: 11) {
+                Text(record.status.sidebarTitle.uppercased())
+                    .font(.caption.weight(.semibold))
+                    .tracking(2.2)
+                    .foregroundStyle(record.status.tint)
 
-                    if !record.artist.isEmpty {
-                        Text(record.artist)
-                            .font(.title3)
-                            .foregroundStyle(SetlistTheme.mutedPaper)
-                    }
-                }
+                Text(record.title.isEmpty ? "Untitled set" : record.title)
+                    .font(.system(size: 40, weight: .medium))
+                    .foregroundStyle(SetlistTheme.paper)
 
-                Divider()
-                    .overlay(SetlistTheme.hairline)
-
-                Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 14) {
-                    historyRow(
-                        label: "Last activity",
-                        value: record.updatedAt.formatted(
-                            date: .abbreviated,
-                            time: .shortened
-                        )
-                    )
-                    historyRow(label: "Source", value: record.sourceURL)
-                    if let stage = record.stage {
-                        historyRow(label: "Stage", value: stage.displayTitle)
-                    }
-                    if let error = record.errorSummary, !error.isEmpty {
-                        historyRow(label: "Status note", value: error)
-                    }
-                }
-
-                if [.failed, .cancelled, .interrupted].contains(record.status) {
-                    Button("Retry Set") {
-                        retry(record.sourceURL)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(SetlistTheme.cherry)
+                if !record.artist.isEmpty {
+                    Text(record.artist)
+                        .font(.title3)
+                        .foregroundStyle(SetlistTheme.mutedPaper)
                 }
             }
-            .frame(maxWidth: 680, alignment: .leading)
-            .padding(SetlistTheme.detailPadding)
+
+            Divider()
+                .overlay(SetlistTheme.hairline)
+
+            Grid(alignment: .leading, horizontalSpacing: 28, verticalSpacing: 14) {
+                historyRow(
+                    label: "Last activity",
+                    value: record.updatedAt.formatted(
+                        date: .abbreviated,
+                        time: .shortened
+                    )
+                )
+                historyRow(label: "Source", value: record.sourceURL)
+                if let stage = record.stage {
+                    historyRow(label: "Stage", value: stage.displayTitle)
+                }
+                if let error = record.errorSummary, !error.isEmpty {
+                    historyRow(label: "Status note", value: error)
+                }
+            }
+
+            if [.failed, .cancelled, .interrupted].contains(record.status) {
+                Button("Retry Set") {
+                    retry(record.sourceURL)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(SetlistTheme.cherry)
+            }
         }
+        .frame(maxWidth: 680, alignment: .leading)
+        .padding(SetlistTheme.detailPadding)
     }
 
     private func historyRow(label: String, value: String) -> some View {

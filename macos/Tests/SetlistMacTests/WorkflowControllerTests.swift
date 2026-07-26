@@ -111,6 +111,20 @@ final class WorkflowControllerTests: XCTestCase {
         )
     }
 
+    func testMarkImportedStampsRecordAndPersists() async throws {
+        let api = StubAPI(resolve: { _ in .fixture(videoID: "abcdefghijk") })
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+
+        await controller.resolve("https://youtu.be/abcdefghijk")
+        let record = try XCTUnwrap(history.records.first)
+        XCTAssertNil(record.importedAt)
+
+        controller.markImported(recordID: record.id)
+
+        XCTAssertNotNil(record.importedAt)
+    }
+
     func testResolveFailureIsPersisted() async throws {
         let api = StubAPI(resolve: { _ in throw StubError.resolveFailed })
         let history = try makeHistory()

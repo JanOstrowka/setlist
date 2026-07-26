@@ -298,6 +298,16 @@ final class WorkflowController {
         progressTask = nil
     }
 
+    /// Stamps a record as imported into Apple Music and persists it, so
+    /// Recent and the completed views remember the import across launches.
+    func markImported(recordID: UUID) {
+        guard let record = record(id: recordID) else {
+            return
+        }
+        record.importedAt = Date()
+        try? history.save()
+    }
+
     func startOver() {
         guard case .processing = state else {
             do {
