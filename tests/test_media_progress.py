@@ -96,6 +96,156 @@ def test_download_audio_publishes_structured_progress(monkeypatch, tmp_path):
     ]
 
 
+def test_download_audio_retries_transient_broken_pipe(monkeypatch, tmp_path):
+    destination = tmp_path / "source.webm"
+    attempts = []
+
+    class FlakyYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def extract_info(self, url, download):
+            attempts.append(url)
+            if len(attempts) == 1:
+                raise RuntimeError(
+                    "Unable to download video: [Errno 32] Broken pipe"
+                )
+            destination.write_bytes(b"audio")
+            hook = self.options["progress_hooks"][0]
+            hook({"status": "finished", "filename": str(destination)})
+            return {}
+
+    monkeypatch.setattr(downloader, "YoutubeDL", FlakyYoutubeDL)
+    monkeypatch.setattr(downloader.time, "sleep", lambda _: None)
+
+    result = download_audio("https://example.test/video", tmp_path, lambda _: None)
+
+    assert result == destination
+    assert len(attempts) == 2
+
+
+def test_download_audio_does_not_retry_nontransient_errors(monkeypatch, tmp_path):
+    attempts = []
+
+    class FailingYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def extract_info(self, url, download):
+            attempts.append(url)
+            raise RuntimeError("Video unavailable")
+
+    monkeypatch.setattr(downloader, "YoutubeDL", FailingYoutubeDL)
+    monkeypatch.setattr(downloader.time, "sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="Video unavailable"):
+        download_audio("https://example.test/video", tmp_path, lambda _: None)
+
+    assert len(attempts) == 1
+
+
+def test_download_audio_gives_up_after_bounded_transient_retries(monkeypatch, tmp_path):
+    attempts = []
+
+    class AlwaysBrokenYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def extract_info(self, url, download):
+            attempts.append(url)
+            raise RuntimeError("[Errno 32] Broken pipe")
+
+    monkeypatch.setattr(downloader, "YoutubeDL", AlwaysBrokenYoutubeDL)
+    monkeypatch.setattr(downloader.time, "sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="Broken pipe"):
+        download_audio("https://example.test/video", tmp_path, lambda _: None)
+
+    assert len(attempts) == downloader._DOWNLOAD_ATTEMPTS
+
+
+def test_download_audio_does_not_retry_cancellation(monkeypatch, tmp_path):
+    attempts = []
+    token = CancellationToken()
+
+    class CancellingYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def extract_info(self, url, download):
+            attempts.append(url)
+            token.cancel()
+            token.raise_if_cancelled()
+
+    monkeypatch.setattr(downloader, "YoutubeDL", CancellingYoutubeDL)
+    monkeypatch.setattr(downloader.time, "sleep", lambda _: None)
+
+    with pytest.raises(JobCancelled):
+        download_audio(
+            "https://example.test/video",
+            tmp_path,
+            lambda _: None,
+            cancellation=token,
+        )
+
+    assert len(attempts) == 1
+
+
+def test_download_audio_uses_resilient_transport_options(monkeypatch, tmp_path):
+    captured = {}
+    destination = tmp_path / "source.webm"
+
+    class RecordingYoutubeDL:
+        def __init__(self, options):
+            captured.update(options)
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def extract_info(self, url, download):
+            destination.write_bytes(b"audio")
+            hook = self.options["progress_hooks"][0]
+            hook({"status": "finished", "filename": str(destination)})
+            return {}
+
+    monkeypatch.setattr(downloader, "YoutubeDL", RecordingYoutubeDL)
+
+    download_audio("https://example.test/video", tmp_path, lambda _: None)
+
+    assert captured["retries"] == 10
+    assert captured["fragment_retries"] == 10
+    assert captured["socket_timeout"] == 20
+    assert captured["http_chunk_size"] == 10 * 1024 * 1024
+
+
 def test_download_audio_checks_cancellation_before_publishing(monkeypatch, tmp_path):
     class FakeYoutubeDL:
         def __init__(self, options):

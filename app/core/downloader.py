@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import subprocess
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,11 +11,31 @@ from typing import Callable, Optional
 
 from yt_dlp import YoutubeDL
 
-from .job_state import CancellationToken
+from .job_state import CancellationToken, JobCancelled
 
 
 _PROCESS_STOP_TIMEOUT_SECONDS = 5.0
 _STDERR_JOIN_TIMEOUT_SECONDS = 1.0
+
+# YouTube periodically drops long-running connections mid-stream; the
+# failure surfaces as one of these transport errors. Such downloads are
+# retried (yt-dlp resumes the .part file), everything else fails fast.
+_TRANSIENT_DOWNLOAD_MARKERS = (
+    "broken pipe",
+    "connection reset",
+    "connection aborted",
+    "remote end closed",
+    "timed out",
+    "incomplete read",
+    "temporary failure",
+)
+_DOWNLOAD_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 2.0
+
+
+def _is_transient_download_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in _TRANSIENT_DOWNLOAD_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -143,6 +164,12 @@ def download_audio(
         "quiet": True,
         "no_warnings": True,
         "progress_hooks": [hook],
+        # YouTube resets long-running connections on large streams;
+        # chunked requests plus generous retries ride the resets out.
+        "retries": 10,
+        "fragment_retries": 10,
+        "socket_timeout": 20,
+        "http_chunk_size": 10 * 1024 * 1024,
     }
     if pot_provider_url:
         # Requires the bgutil PO-token provider plugin. Plugin >=1.0 (yt-dlp's
@@ -156,10 +183,23 @@ def download_audio(
     if cookiefile:
         opts["cookiefile"] = str(cookiefile)
 
-    with YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        if not state["path"]:
-            state["path"] = ydl.prepare_filename(info)
+    last_attempt = _DOWNLOAD_ATTEMPTS - 1
+    for attempt in range(_DOWNLOAD_ATTEMPTS):
+        if cancellation:
+            cancellation.raise_if_cancelled()
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if not state["path"]:
+                    state["path"] = ydl.prepare_filename(info)
+            break
+        except JobCancelled:
+            raise
+        except Exception as exc:
+            if attempt == last_attempt or not _is_transient_download_error(exc):
+                raise
+            # yt-dlp resumes the partial .part file on the next attempt.
+            time.sleep(_RETRY_BACKOFF_SECONDS * (attempt + 1))
 
     path = state["path"]
     if not path or not Path(path).exists():
