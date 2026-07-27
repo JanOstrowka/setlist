@@ -244,6 +244,9 @@ def test_download_audio_uses_resilient_transport_options(monkeypatch, tmp_path):
     assert captured["fragment_retries"] == 10
     assert captured["socket_timeout"] == 20
     assert captured["http_chunk_size"] == 10 * 1024 * 1024
+    # The console progress bar must stay off: writing it to a dead stdout
+    # (orphaned backend) raises EPIPE and kills otherwise healthy downloads.
+    assert captured["noprogress"] is True
 
 
 def test_download_audio_checks_cancellation_before_publishing(monkeypatch, tmp_path):

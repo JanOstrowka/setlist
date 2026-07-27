@@ -206,19 +206,39 @@ final class BackendController: ObservableObject {
         ].joined(separator: ":")
         process.environment = environment
 
-        let pipe = Pipe()
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            FileHandle.standardError.write(data)
-        }
-        process.standardOutput = pipe
-        process.standardError = pipe
+        let logHandle = openLogFile(at: configuration.logFileURL)
+        process.standardOutput = logHandle
+        process.standardError = logHandle
         try process.run()
         return process
+    }
+
+    nonisolated private static let logTruncationThresholdBytes = 5_000_000
+
+    /// Opens the backend log for appending, truncating oversized files.
+    /// Falls back to the null device so a logging problem never blocks
+    /// the engine from starting.
+    nonisolated private static func openLogFile(at url: URL) -> FileHandle {
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let size = (try? fileManager.attributesOfItem(
+                atPath: url.path
+            )[.size] as? Int) ?? 0
+            if size > logTruncationThresholdBytes {
+                try Data().write(to: url)
+            } else if !fileManager.fileExists(atPath: url.path) {
+                fileManager.createFile(atPath: url.path, contents: nil)
+            }
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.seekToEnd()
+            return handle
+        } catch {
+            return FileHandle.nullDevice
+        }
     }
 }
 

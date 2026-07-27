@@ -163,6 +163,10 @@ def download_audio(
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        # Progress is consumed via hooks; never draw the console progress
+        # bar. quiet does not cover it, and writing it to a dead stdout
+        # (backend orphaned by its launcher) fails the download with EPIPE.
+        "noprogress": True,
         "progress_hooks": [hook],
         # YouTube resets long-running connections on large streams;
         # chunked requests plus generous retries ride the resets out.

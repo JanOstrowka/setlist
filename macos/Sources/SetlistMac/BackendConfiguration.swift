@@ -18,6 +18,15 @@ struct BackendConfiguration {
         projectRoot.appendingPathComponent("run.sh")
     }
 
+    /// Backend output goes to a log file rather than a pipe held by the
+    /// app: a pipe dies with the app, and a surviving backend then fails
+    /// with EPIPE on its next write. The file also keeps engine logs
+    /// available for debugging.
+    var logFileURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Setlist/backend.log")
+    }
+
     init(projectRoot: URL) {
         self.projectRoot = projectRoot
         self.port = Self.readPort(

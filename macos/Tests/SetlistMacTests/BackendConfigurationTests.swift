@@ -39,4 +39,16 @@ final class BackendConfigurationTests: XCTestCase {
 
         XCTAssertEqual(configuration.port, 8765)
     }
+
+    func testBackendLogLivesInUserLogsDirectory() {
+        let configuration = BackendConfiguration(
+            projectRoot: FileManager.default.temporaryDirectory
+        )
+
+        XCTAssertTrue(
+            configuration.logFileURL.path.hasSuffix(
+                "Library/Logs/Setlist/backend.log"
+            )
+        )
+    }
 }
