@@ -15,6 +15,10 @@ struct CompletedSetSummaryView: View {
     let importer: any MusicImporting
     let onImported: () -> Void
     let startAnother: (() -> Void)?
+    /// Reopens the set in the review scene with its saved tracklist and
+    /// metadata; running it again replaces the files on disk.
+    let edit: (() -> Void)?
+    let editDisabled: Bool
 
     private enum ImportPhase: Equatable {
         case idle
@@ -36,7 +40,9 @@ struct CompletedSetSummaryView: View {
         alreadyImported: Bool,
         importer: any MusicImporting,
         onImported: @escaping () -> Void,
-        startAnother: (() -> Void)? = nil
+        startAnother: (() -> Void)? = nil,
+        edit: (() -> Void)? = nil,
+        editDisabled: Bool = false
     ) {
         self.title = title
         self.artist = artist
@@ -48,6 +54,8 @@ struct CompletedSetSummaryView: View {
         self.importer = importer
         self.onImported = onImported
         self.startAnother = startAnother
+        self.edit = edit
+        self.editDisabled = editDisabled
         _importPhase = State(initialValue: alreadyImported ? .imported : .idle)
     }
 
@@ -217,6 +225,21 @@ struct CompletedSetSummaryView: View {
                     revealInFinder()
                 }
                 .disabled(availablePaths.isEmpty)
+
+                if let edit {
+                    Button {
+                        edit()
+                    } label: {
+                        Label("Edit Set", systemImage: "pencil")
+                    }
+                    .disabled(editDisabled)
+                    .help(
+                        editDisabled
+                            ? "Available once the current set has finished"
+                            : "Fix the tracklist or tags and run the set "
+                                + "again; the files on disk are replaced"
+                    )
+                }
 
                 if let watchURL = Self.watchURL(
                     videoID: videoID,

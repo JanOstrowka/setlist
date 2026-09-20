@@ -126,3 +126,21 @@ final class HistoryRecord {
         self.importedAt = importedAt
     }
 }
+
+extension HistoryRecord {
+    /// A record with output files is a finished set; a review on top of
+    /// it is transient. When such a review is abandoned — a newer set, a
+    /// quit — the set goes back to finished instead of "interrupted".
+    /// Returns whether it did.
+    func restoreCompletedIfFilesRemain() -> Bool {
+        guard !outputPaths.isEmpty else {
+            return false
+        }
+        status = .completed
+        stage = .done
+        errorSummary = nil
+        completedAt = completedAt ?? updatedAt
+        updatedAt = Date()
+        return true
+    }
+}

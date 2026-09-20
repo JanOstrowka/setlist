@@ -111,6 +111,352 @@ final class WorkflowControllerTests: XCTestCase {
         )
     }
 
+    // MARK: - Reopening sets from Recent
+
+    func testReopenRestoresSavedEditsOverAFreshResolve() async throws {
+        let api = StubAPI(resolve: { _ in .fixture(videoID: "abcdefghijk") })
+        let history = try makeHistory()
+        let first = WorkflowController(api: api, history: history)
+        await first.resolve("https://youtu.be/abcdefghijk")
+        guard case .reviewing(var draft) = first.state else {
+            return XCTFail("Expected reviewing")
+        }
+        draft.metadata.title = "My Edited Title"
+        draft.metadata.compilation = true
+        draft.tracklist = .init(
+            source: .oneThousandOneTracklists,
+            tracks: [
+                .init(start: 0, title: "Opener", artist: "A"),
+                .init(start: 600, title: "Closer", artist: "B"),
+            ]
+        )
+        first.replaceDraft(draft)
+        first.shutdown()
+
+        // The app quit while reviewing; the draft survives in the record.
+        let relaunched = WorkflowController(api: api, history: history)
+        let record = try XCTUnwrap(history.records.first)
+        XCTAssertEqual(record.status, .reviewing)
+
+        await relaunched.reopen(recordID: record.id)
+
+        guard case .reviewing(let reopened) = relaunched.state else {
+            return XCTFail("Expected reviewing, got \(relaunched.state)")
+        }
+        XCTAssertEqual(reopened.historyID, record.id)
+        XCTAssertEqual(reopened.metadata.title, "My Edited Title")
+        XCTAssertTrue(reopened.metadata.compilation)
+        XCTAssertEqual(reopened.tracklist.tracks.map(\.title), ["Opener", "Closer"])
+        XCTAssertEqual(reopened.tracklist.source, .oneThousandOneTracklists)
+        XCTAssertTrue(reopened.split)
+        // Fresh resolve data still flows in underneath the saved edits.
+        XCTAssertEqual(reopened.duration, 3_600)
+        XCTAssertEqual(reopened.videoID, "abcdefghijk")
+        XCTAssertEqual(history.records.count, 1)
+        XCTAssertEqual(relaunched.activeRecordID, record.id)
+    }
+
+    func testReopenIsIgnoredWhileProcessing() async throws {
+        let streamProbe = StreamProbe()
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .open(probe: streamProbe) },
+            cancel: { _ in .cancelled(jobID: "job-1") }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+        let processing = Task { await controller.process() }
+        try await waitUntil { await streamProbe.didStart }
+        let record = try XCTUnwrap(history.records.first)
+
+        await controller.reopen(recordID: record.id)
+
+        guard case .processing = controller.state else {
+            controller.shutdown()
+            await processing.value
+            return XCTFail("Expected processing to continue")
+        }
+        controller.shutdown()
+        await processing.value
+    }
+
+    func testReopeningAFinishedSetRemembersItsFilesAndKeepsThemUntilRerun() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .events([.init(stage: .done, pct: 100)]) },
+            job: { _ in .completed(jobID: "job-1", paths: ["/tmp/sets/Set/01 - A.m4a"]) }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+        await controller.process()
+        let record = try XCTUnwrap(history.records.first)
+        XCTAssertEqual(record.status, .completed)
+        let finishedAt = try XCTUnwrap(record.completedAt)
+
+        await controller.reopen(recordID: record.id)
+
+        guard case .reviewing(let draft) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        XCTAssertEqual(draft.replacesOutputPaths, ["/tmp/sets/Set/01 - A.m4a"])
+        XCTAssertEqual(record.status, .reviewing)
+        XCTAssertEqual(record.outputPaths, ["/tmp/sets/Set/01 - A.m4a"])
+        XCTAssertEqual(record.completedAt, finishedAt)
+
+        // Walking away from the edit leaves the finished set finished.
+        controller.startOver()
+
+        XCTAssertEqual(record.status, .completed)
+        XCTAssertEqual(record.stage, .done)
+        XCTAssertNil(record.errorSummary)
+        XCTAssertEqual(record.outputPaths, ["/tmp/sets/Set/01 - A.m4a"])
+    }
+
+    func testPastingTheLinkOfAFinishedSetStartsFreshButStillReplacesItsFiles() async throws {
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in .events([.init(stage: .done, pct: 100)]) },
+            job: { _ in .completed(jobID: "job-1", paths: ["/tmp/sets/Set/01 - A.m4a"]) }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("https://youtu.be/video")
+        guard case .reviewing(var edited) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        edited.metadata.title = "Edited before the run"
+        controller.replaceDraft(edited)
+        await controller.process()
+        let record = try XCTUnwrap(history.records.first)
+
+        await controller.resolve("https://youtu.be/video")
+
+        guard case .reviewing(let fresh) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        XCTAssertEqual(fresh.metadata.title, "Fixture Set", "a pasted link starts over")
+        XCTAssertEqual(fresh.replacesOutputPaths, ["/tmp/sets/Set/01 - A.m4a"])
+
+        controller.startOver()
+
+        XCTAssertEqual(record.status, .completed)
+        XCTAssertEqual(record.outputPaths, ["/tmp/sets/Set/01 - A.m4a"])
+    }
+
+    func testRerunReplacesOutputsTrashesStaleFilesAndResetsImport() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("setlist-rerun-\(UUID().uuidString)")
+        let oldDir = root.appendingPathComponent("Old Album")
+        let newDir = root.appendingPathComponent("New Album")
+        try FileManager.default.createDirectory(at: oldDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: newDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // The album was renamed in the review, so the re-run lands in a
+        // new folder and the old one is left holding only its cover art.
+        let oldA = oldDir.appendingPathComponent("01 - A.m4a").path
+        let oldB = oldDir.appendingPathComponent("02 - B.m4a").path
+        let cover = oldDir.appendingPathComponent("cover.jpg").path
+        let newA = newDir.appendingPathComponent("01 - A.m4a").path
+        let newC = newDir.appendingPathComponent("02 - C.m4a").path
+        for path in [oldA, oldB, cover, newA, newC] {
+            try Data("x".utf8).write(to: URL(fileURLWithPath: path))
+        }
+
+        let firstPaths = [oldA, oldB]
+        let secondPaths = [newA, newC]
+        let runs = SnapshotQueue([
+            .completed(jobID: "job-1", paths: firstPaths),
+            .completed(jobID: "job-2", paths: secondPaths),
+        ])
+        let jobIDs = SnapshotQueue([
+            .queued(jobID: "job-1"),
+            .queued(jobID: "job-2"),
+        ])
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in try await jobIDs.next().jobID },
+            progress: { _ in .events([.init(stage: .done, pct: 100)]) },
+            job: { _ in try await runs.next() }
+        )
+        let trashed = TrashLog()
+        let cleanup = StaleOutputCleanup(trash: { url in
+            trashed.record(url)
+            try FileManager.default.removeItem(at: url)
+        })
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            outputCleanup: cleanup
+        )
+        await controller.resolve("source")
+        await controller.process()
+        let record = try XCTUnwrap(history.records.first)
+        XCTAssertEqual(record.outputPaths, firstPaths)
+        controller.markImported(recordID: record.id)
+        let firstFinish = try XCTUnwrap(record.completedAt)
+
+        await controller.reopen(recordID: record.id)
+        await controller.process()
+
+        guard case .completed(let completed) = controller.state else {
+            return XCTFail("Expected completed, got \(controller.state)")
+        }
+        XCTAssertEqual(completed.outputPaths, secondPaths)
+        XCTAssertEqual(record.outputPaths, secondPaths)
+        XCTAssertEqual(record.status, .completed)
+        XCTAssertNil(record.importedAt, "Rewritten files are not in Music yet")
+        XCTAssertNotEqual(record.completedAt, firstFinish)
+        // Both old tracks go, then the old folder that only holds cover art.
+        XCTAssertEqual(trashed.paths(), [oldA, oldB, oldDir.path])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldDir.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newA))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newC))
+    }
+
+    /// The common re-run: same album, same track names, files rewritten
+    /// in place. The done event arrives before the file list does, and
+    /// carries only the folder. Nothing may be trashed at that point —
+    /// the "old" paths are the freshly written files.
+    func testRerunIntoTheSameFolderTrashesNothingEvenThoughDoneArrivesFirst() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("setlist-same-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let a = dir.appendingPathComponent("01 - A.m4a").path
+        let b = dir.appendingPathComponent("02 - B.m4a").path
+        let cover = dir.appendingPathComponent("cover.jpg").path
+        for path in [a, b, cover] {
+            try Data("x".utf8).write(to: URL(fileURLWithPath: path))
+        }
+
+        let runs = SnapshotQueue([
+            .completed(jobID: "job-1", paths: [a, b]),
+            .completed(jobID: "job-2", paths: [a, b]),
+        ])
+        let jobIDs = SnapshotQueue([.queued(jobID: "job-1"), .queued(jobID: "job-2")])
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in try await jobIDs.next().jobID },
+            progress: { _ in
+                .events([.init(stage: .done, pct: 100, message: "Saved 2 tracks", filePath: dir.path)])
+            },
+            job: { _ in try await runs.next() }
+        )
+        let trashed = TrashLog()
+        let cleanup = StaleOutputCleanup(trash: { url in
+            trashed.record(url)
+            try FileManager.default.removeItem(at: url)
+        })
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history, outputCleanup: cleanup)
+        await controller.resolve("source")
+        await controller.process()
+        let record = try XCTUnwrap(history.records.first)
+        controller.markImported(recordID: record.id)
+
+        await controller.reopen(recordID: record.id)
+        await controller.process()
+
+        guard case .completed(let completed) = controller.state else {
+            return XCTFail("Expected completed, got \(controller.state)")
+        }
+        XCTAssertEqual(completed.outputPaths, [a, b])
+        XCTAssertEqual(record.outputPaths, [a, b])
+        XCTAssertEqual(trashed.paths(), [])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: a))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: b))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cover))
+        XCTAssertNil(record.importedAt, "Rewritten files are not in Music yet")
+    }
+
+    /// When the final file list never arrives, the old files are left
+    /// alone: without knowing what the run produced there is nothing safe
+    /// to remove.
+    func testRerunWithoutAFinalFileListLeavesTheOldFilesAlone() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("setlist-nolist-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let a = dir.appendingPathComponent("01 - A.m4a").path
+        try Data("x".utf8).write(to: URL(fileURLWithPath: a))
+
+        let firstRun = SnapshotQueue([.completed(jobID: "job-1", paths: [a])])
+        let jobIDs = SnapshotQueue([.queued(jobID: "job-1"), .queued(jobID: "job-2")])
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in try await jobIDs.next().jobID },
+            progress: { _ in .events([.init(stage: .done, pct: 100)]) },
+            job: { jobID in
+                if jobID == "job-1" {
+                    return try await firstRun.next()
+                }
+                throw SetlistAPIError.httpStatus(404, Data("gone".utf8))
+            }
+        )
+        let trashed = TrashLog()
+        let cleanup = StaleOutputCleanup(trash: { url in
+            trashed.record(url)
+            try FileManager.default.removeItem(at: url)
+        })
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            retryDelay: { _ in },
+            outputCleanup: cleanup
+        )
+        await controller.resolve("source")
+        await controller.process()
+        let record = try XCTUnwrap(history.records.first)
+
+        await controller.reopen(recordID: record.id)
+        await controller.process()
+
+        XCTAssertEqual(record.status, .completed)
+        XCTAssertEqual(trashed.paths(), [])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: a))
+    }
+
+    func testFailedRerunKeepsTheOldFilesOnTheRecord() async throws {
+        let runs = SnapshotQueue([
+            .completed(jobID: "job-1", paths: ["/tmp/sets/Set/01 - A.m4a"]),
+        ])
+        let events = SnapshotQueue([
+            .queued(jobID: "first"),
+            .queued(jobID: "second"),
+        ])
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in try await events.next().jobID },
+            progress: { jobID in
+                jobID == "first"
+                    ? .events([.init(stage: .done, pct: 100)])
+                    : .events([.init(stage: .error, pct: 0, message: "Network down")])
+            },
+            job: { _ in try await runs.next() }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+        await controller.process()
+        let record = try XCTUnwrap(history.records.first)
+
+        await controller.reopen(recordID: record.id)
+        await controller.process()
+
+        guard case .failed = controller.state else {
+            return XCTFail("Expected failed")
+        }
+        XCTAssertEqual(record.status, .failed)
+        XCTAssertEqual(record.outputPaths, ["/tmp/sets/Set/01 - A.m4a"])
+    }
+
     func testMarkImportedStampsRecordAndPersists() async throws {
         let api = StubAPI(resolve: { _ in .fixture(videoID: "abcdefghijk") })
         let history = try makeHistory()
@@ -805,6 +1151,39 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertEqual(history.records.first?.outputPaths, ["/tmp/streamed.m4a"])
     }
 
+    func testSplitDoneEventPointsAtTheFolderWhichIsNotATrack() async throws {
+        // A split job's done event carries the album folder, so Finder can
+        // be pointed at it. The folder must not be listed as a 32nd track,
+        // nor trashed as a stale "file" on a later re-run.
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("setlist-split-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let track = folder.appendingPathComponent("01 - A.m4a").path
+
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            submit: { _ in "job-1" },
+            progress: { _ in
+                .events([
+                    .init(stage: .done, pct: 100, message: "Saved 1 tracks", filePath: folder.path),
+                ])
+            },
+            job: { _ in .completed(jobID: "job-1", paths: [track]) }
+        )
+        let history = try makeHistory()
+        let controller = WorkflowController(api: api, history: history)
+        await controller.resolve("source")
+
+        await controller.process()
+
+        guard case .completed(let completed) = controller.state else {
+            return XCTFail("Expected completion")
+        }
+        XCTAssertEqual(completed.outputPaths, [track])
+        XCTAssertEqual(history.records.first?.outputPaths, [track])
+    }
+
     func testProgressDisconnectPollsNonterminalSnapshotsUntilCompleted() async throws {
         let snapshots = SnapshotQueue([
             .queued(jobID: "job-1"),
@@ -1318,6 +1697,21 @@ private actor SnapshotQueue {
             throw StubError.unconfigured
         }
         return snapshots.removeFirst()
+    }
+}
+
+/// Records what a re-run sent to the Trash. The cleanup runs synchronously
+/// on the main actor, so a lock is all the recorder needs.
+private final class TrashLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: [URL] = []
+
+    func record(_ url: URL) {
+        lock.withLock { urls.append(url) }
+    }
+
+    func paths() -> [String] {
+        lock.withLock { urls.map(\.path) }
     }
 }
 

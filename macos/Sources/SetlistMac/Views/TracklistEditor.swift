@@ -6,6 +6,9 @@ struct TracklistEditor: View {
     let seek: (Double) -> Void
     let pasteTracklist: (String) -> Void
     let retryFind: () -> Void
+    /// Opens the tracklist search in the browser so the user can find
+    /// the page themselves and paste its URL.
+    let searchInBrowser: () -> Void
 
     @State private var pasteText = ""
     @State private var showsPasteSheet = false
@@ -104,6 +107,19 @@ struct TracklistEditor: View {
                         systemImage: "sparkle.magnifyingglass"
                     )
                 }
+
+                Button {
+                    searchInBrowser()
+                } label: {
+                    Label(
+                        "Search in Browser",
+                        systemImage: "arrow.up.forward"
+                    )
+                }
+                .help(
+                    "Search 1001tracklists in your browser, then paste the "
+                        + "tracklist URL here"
+                )
 
                 Button("Add Tracks Manually", systemImage: "plus") {
                     withAnimation(.easeOut(duration: 0.18)) {

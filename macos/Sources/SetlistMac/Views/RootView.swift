@@ -65,19 +65,24 @@ struct RootView: View {
                 retry: backend.retry
             )
         case .ready:
-            if let selectedRecord {
+            // A selected set that the workflow is currently about shows the
+            // live scene (review, progress, completion), not a summary.
+            if let selectedRecord,
+               selectedRecord.id != environment.workflow.activeRecordID {
                 HistoryDetailView(
                     record: selectedRecord,
                     importer: environment.musicImporter,
+                    isBusy: isProducing,
                     markImported: {
                         environment.workflow.markImported(
                             recordID: selectedRecord.id
                         )
                     },
-                    retry: { url in
-                        environment.selectedRecordID = nil
+                    reopen: {
                         Task {
-                            await environment.workflow.resolve(url)
+                            await environment.workflow.reopen(
+                                recordID: selectedRecord.id
+                            )
                         }
                     }
                 )
@@ -89,6 +94,14 @@ struct RootView: View {
                 )
             }
         }
+    }
+
+    /// Reopening a set is not possible while another one is producing.
+    private var isProducing: Bool {
+        if case .processing = environment.workflow.state {
+            return true
+        }
+        return false
     }
 
     private func startOver() {
@@ -140,9 +153,10 @@ private struct WorkflowDetailView: View {
                 ),
                 actionTitle: record == nil ? "Start Another Set" : "Retry",
                 action: {
-                    if let sourceURL = record?.sourceURL {
+                    if let record {
+                        // Retrying keeps the reviewed metadata and tracklist.
                         Task {
-                            await workflow.resolve(sourceURL)
+                            await workflow.reopen(recordID: record.id)
                         }
                     } else {
                         workflow.startOver()
@@ -233,8 +247,9 @@ private struct EngineFailureView: View {
 private struct HistoryDetailView: View {
     let record: HistoryRecord
     let importer: any MusicImporting
+    let isBusy: Bool
     let markImported: () -> Void
-    let retry: (String) -> Void
+    let reopen: () -> Void
 
     var body: some View {
         ZStack {
@@ -255,11 +270,46 @@ private struct HistoryDetailView: View {
                     note: record.errorSummary,
                     alreadyImported: record.importedAt != nil,
                     importer: importer,
-                    onImported: markImported
+                    onImported: markImported,
+                    edit: reopen,
+                    editDisabled: isBusy
                 )
             } else {
                 statusSummary
             }
+        }
+    }
+
+    private var savedTrackCount: Int? {
+        guard let data = record.tracklistJSON,
+              let tracklist = try? APIJSON.decoder.decode(APITracklist.self, from: data),
+              !tracklist.tracks.isEmpty else {
+            return nil
+        }
+        return tracklist.tracks.count
+    }
+
+    /// What the primary action does for this record: a paused review is
+    /// picked up where it was left, anything that stopped is set up again
+    /// with its saved edits.
+    private var primaryActionTitle: String? {
+        switch record.status {
+        case .reviewing:
+            "Continue Review"
+        case .failed, .cancelled, .interrupted:
+            "Retry Set"
+        case .resolving, .processing, .completed:
+            nil
+        }
+    }
+
+    private var primaryActionDetail: String {
+        let tracks = savedTrackCount.map { "\($0) tracks" } ?? "no tracklist yet"
+        switch record.status {
+        case .reviewing:
+            return "Your edits are saved — \(tracks). Pick up where you left off."
+        default:
+            return "Starts again with the saved metadata and tracklist (\(tracks))."
         }
     }
 
@@ -302,12 +352,23 @@ private struct HistoryDetailView: View {
                 }
             }
 
-            if [.failed, .cancelled, .interrupted].contains(record.status) {
-                Button("Retry Set") {
-                    retry(record.sourceURL)
+            if let primaryActionTitle {
+                VStack(alignment: .leading, spacing: 10) {
+                    Button(primaryActionTitle, action: reopen)
+                        .buttonStyle(.borderedProminent)
+                        .tint(SetlistTheme.cherry)
+                        .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(isBusy)
+                    Text(
+                        isBusy
+                            ? "Available once the current set has finished."
+                            : primaryActionDetail
+                    )
+                    .font(.callout)
+                    .foregroundStyle(SetlistTheme.mutedPaper)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(SetlistTheme.cherry)
+                .padding(.top, 6)
             }
         }
         .frame(maxWidth: 680, alignment: .leading)

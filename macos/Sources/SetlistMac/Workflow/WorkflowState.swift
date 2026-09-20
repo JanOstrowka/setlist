@@ -18,6 +18,10 @@ struct SetDraft: Equatable, Sendable {
     var tracklist: APITracklist
     var format: APIAudioFormat
     var split: Bool
+    /// Files a previous run of this set produced. Set when a finished set
+    /// is reopened for editing; the ones the re-run does not rewrite are
+    /// trashed on completion.
+    var replacesOutputPaths: [String] = []
 
     init(
         historyID: UUID,

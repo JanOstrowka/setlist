@@ -48,6 +48,12 @@ class Config:
     pot_provider_url: str | None
     api_auth_token: str | None
     cors_origins: tuple[str, ...]
+    # Encoded full-set masters kept for fast re-runs; 0 bytes turns it off.
+    master_cache_dir: Path
+    master_cache_bytes: int
+
+
+_DEFAULT_MASTER_CACHE_BYTES = 3 * 1024**3
 
 
 def load_config() -> Config:
@@ -61,4 +67,10 @@ def load_config() -> Config:
         pot_provider_url=os.getenv("POT_PROVIDER_URL") or None,
         api_auth_token=os.getenv("API_AUTH_TOKEN") or None,
         cors_origins=_parse_origins(os.getenv("CORS_ORIGINS", "")),
+        master_cache_dir=_expand(
+            os.getenv("MASTER_CACHE_DIR", "~/.cache/setlist/masters")
+        ),
+        master_cache_bytes=int(
+            os.getenv("MASTER_CACHE_BYTES", str(_DEFAULT_MASTER_CACHE_BYTES))
+        ),
     )

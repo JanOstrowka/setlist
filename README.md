@@ -34,6 +34,7 @@ Everything the app needs — the media engine, `ffmpeg`, `yt-dlp` — ships insi
 - Paste a YouTube URL and get a finished album: best-quality audio, encoded to Apple-Music-native **ALAC** (or AAC 256), tagged, with a square cover.
 - Finds the tracklist for you — YouTube chapters, description timestamps, or 1001tracklists — and cuts the set into per-track files **losslessly** at the cue points.
 - Review before anything is written: edit title, artist, album, year, genre, and every cue; preview any cue in the embedded player.
+- Change your mind later: **Edit Set** on any finished set fixes titles or cues and replaces the files — the encoded master is cached, so a re-run skips the download.
 - **Add to Apple Music** in one click when the set is done; files import as a single gapless album.
 - Remembers every set in a **Recent** sidebar; one set is produced at a time, with live download speed, ETA and per-track status.
 - Optional **OpenAI** key cleans up titles, artists and genres. Without it, Setlist parses the video title.
@@ -54,13 +55,14 @@ Everything the app needs — the media engine, `ffmpeg`, `yt-dlp` — ships insi
 4. Paste a YouTube URL and click **Resolve**.
 5. Check the metadata and tracklist, then click **Download**.
 6. When it's done, click **Add to Apple Music**. The first time, macOS asks whether Setlist may control Music — that permission is what performs the import.
-7. Open **Settings…** (`⌘,`) to add an OpenAI key, pick the output folder (default `~/Music/YouTube Sets`), or switch to AAC.
+7. Spotted a wrong title afterwards? Pick the set in **Recent**, click **Edit Set**, fix it, then **Replace Files**. Old files go to the Trash, never straight to deletion.
+8. Open **Settings…** (`⌘,`) to add an OpenAI key, pick the output folder (default `~/Music/YouTube Sets`), or switch to AAC.
 
 ### macOS compatibility
 
 | Setlist version | macOS version                     |
 | --------------- | --------------------------------- |
-| v0.1.0          | Tahoe 26 or newer, Apple Silicon  |
+| v0.1.0 – v0.1.1 | Tahoe 26 or newer, Apple Silicon  |
 
 ### A note on YouTube
 

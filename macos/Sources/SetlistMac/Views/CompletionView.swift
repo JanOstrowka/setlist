@@ -55,6 +55,11 @@ struct CompletionView: View {
             },
             startAnother: { [workflow] in
                 workflow.startOver()
+            },
+            edit: { [workflow] in
+                Task {
+                    await workflow.reopen(recordID: completed.recordID)
+                }
             }
         )
     }

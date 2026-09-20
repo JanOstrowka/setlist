@@ -255,6 +255,121 @@ def test_split_pipeline_reports_each_cut_and_tag_with_track_fields(monkeypatch, 
     ]
 
 
+def _enable_master_cache(manager: JobManager, tmp_path: Path) -> Path:
+    root = tmp_path / "masters"
+    manager.cfg.master_cache_dir = root
+    manager.cfg.master_cache_bytes = 10**9
+    return root
+
+
+def _patch_split_and_tag(monkeypatch) -> None:
+    def fake_split(full, tracks, out_dir, on_track=None, cancellation=None):
+        assert Path(full).read_bytes() == b"encoded-master"
+        return [out_dir / "01 - First.m4a", out_dir / "02 - Second.m4a"]
+
+    monkeypatch.setattr(main_module.splitter, "split_file", fake_split)
+    monkeypatch.setattr(
+        main_module.tagger, "tag_album", lambda *args, **kwargs: None
+    )
+
+
+def test_split_pipeline_keeps_the_encoded_master_for_next_time(monkeypatch, tmp_path):
+    manager, job_id = _manager(tmp_path)
+    cache_root = _enable_master_cache(manager, tmp_path)
+    _patch_library_and_cover(monkeypatch, tmp_path / "output" / "set")
+    _patch_split_and_tag(monkeypatch)
+
+    def fake_download(url, workdir, on_progress, pot_provider_url, cancellation=None):
+        return workdir / "source.webm"
+
+    def fake_encode(source, target, media_format, on_progress=None, cancellation=None):
+        Path(target).write_bytes(b"encoded-master")
+
+    monkeypatch.setattr(main_module.downloader, "download_audio", fake_download)
+    monkeypatch.setattr(main_module.downloader, "encode", fake_encode)
+
+    manager._process_split(job_id, _split_request())
+
+    cached = cache_root / "video-1.alac.m4a"
+    assert cached.read_bytes() == b"encoded-master"
+
+
+def test_split_pipeline_skips_download_and_encode_when_the_master_is_cached(
+    monkeypatch, tmp_path
+):
+    manager, job_id = _manager(tmp_path)
+    cache_root = _enable_master_cache(manager, tmp_path)
+    cache_root.mkdir()
+    (cache_root / "video-1.alac.m4a").write_bytes(b"encoded-master")
+    _patch_library_and_cover(monkeypatch, tmp_path / "output" / "set")
+    _patch_split_and_tag(monkeypatch)
+
+    def no_download(*args, **kwargs):
+        raise AssertionError("download must not run for a cached master")
+
+    monkeypatch.setattr(main_module.downloader, "download_audio", no_download)
+    monkeypatch.setattr(main_module.downloader, "encode", no_download)
+
+    result = manager._process_split(job_id, _split_request())
+
+    events = _events(manager, job_id)
+    assert [(e.stage, e.pct) for e in events if e.stage in ("download", "encode")] == [
+        ("download", 100.0),
+        ("encode", 100.0),
+    ]
+    assert "already on this Mac" in next(e for e in events if e.stage == "download").message
+    assert len(result) == 2
+    # The cache keeps its copy for the next re-run.
+    assert (cache_root / "video-1.alac.m4a").read_bytes() == b"encoded-master"
+
+
+def test_single_pipeline_tags_a_private_copy_of_the_cached_master(monkeypatch, tmp_path):
+    manager, job_id = _manager(tmp_path)
+    cache_root = _enable_master_cache(manager, tmp_path)
+    cache_root.mkdir()
+    (cache_root / "video-1.alac.m4a").write_bytes(b"encoded-master")
+    _patch_library_and_cover(monkeypatch, tmp_path / "output" / "track.m4a")
+    tagged = []
+
+    def fake_write_tags(path, metadata, cover):
+        # Tagging rewrites the file; the cached master must stay pristine.
+        Path(path).write_bytes(b"tagged")
+        tagged.append(Path(path))
+
+    monkeypatch.setattr(main_module.tagger, "write_tags", fake_write_tags)
+    monkeypatch.setattr(
+        main_module.downloader,
+        "download_audio",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no download")),
+    )
+
+    manager._process(job_id, _request())
+
+    assert tagged and tagged[0].name == "encoded.m4a"
+    assert (cache_root / "video-1.alac.m4a").read_bytes() == b"encoded-master"
+
+
+def test_pipeline_runs_without_a_configured_cache(monkeypatch, tmp_path):
+    manager, job_id = _manager(tmp_path)  # cfg has no master_cache_* attributes
+    _patch_library_and_cover(monkeypatch, tmp_path / "output" / "set")
+    _patch_split_and_tag(monkeypatch)
+    monkeypatch.setattr(
+        main_module.downloader,
+        "download_audio",
+        lambda url, workdir, *a, **k: workdir / "source.webm",
+    )
+    monkeypatch.setattr(
+        main_module.downloader,
+        "encode",
+        lambda source, target, *a, **k: Path(target).write_bytes(b"encoded-master"),
+    )
+
+    result = manager._process_split(job_id, _split_request())
+
+    assert len(result) == 2
+    assert not (tmp_path / "masters").exists()
+
+
 def test_cancelled_worker_posts_one_terminal_callback(monkeypatch):
     manager = JobManager(main_module.cfg)
     calls = []

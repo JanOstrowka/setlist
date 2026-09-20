@@ -12,6 +12,14 @@ final class WorkflowController {
     @ObservationIgnored private let detachedCancellationAttemptLimit: Int
     @ObservationIgnored private let minimumResolveDisplay: Duration
     @ObservationIgnored private let pageFetcher: (any TracklistPageFetching)?
+    @ObservationIgnored private let outputCleanup: StaleOutputCleanup
+    /// Outputs of the previous run for sets being run again, keyed by
+    /// record. Consumed when the re-run ends: stale files are trashed on
+    /// success, the old list is put back on the record on failure.
+    @ObservationIgnored private var replacedOutputs: [UUID: [String]] = [:]
+    /// Finished sets currently reopened for editing. If such a review is
+    /// abandoned the set goes back to finished rather than "interrupted".
+    @ObservationIgnored private var reopenedFinishedSets: Set<UUID> = []
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var tracklistTask: Task<Void, Never>?
     @ObservationIgnored private var progressTask: Task<Void, Never>?
@@ -36,7 +44,8 @@ final class WorkflowController {
         },
         detachedCancellationAttemptLimit: Int = 8,
         minimumResolveDisplay: Duration = .zero,
-        pageFetcher: (any TracklistPageFetching)? = nil
+        pageFetcher: (any TracklistPageFetching)? = nil,
+        outputCleanup: StaleOutputCleanup = StaleOutputCleanup()
     ) {
         self.api = api
         self.history = history
@@ -47,6 +56,7 @@ final class WorkflowController {
         )
         self.minimumResolveDisplay = minimumResolveDisplay
         self.pageFetcher = pageFetcher
+        self.outputCleanup = outputCleanup
 
         do {
             try history.markActiveJobsInterrupted()
@@ -70,12 +80,58 @@ final class WorkflowController {
 
     func resolve(_ sourceURL: String) async {
         guard case .processing = state else {
-            await beginResolve(sourceURL)
+            await beginResolve(sourceURL, overlay: nil)
             return
         }
     }
 
-    private func beginResolve(_ sourceURL: String) async {
+    /// Brings a set from Recent back into the review scene. The video is
+    /// resolved again — a draft needs fresh duration, cover and chapters —
+    /// and the record's saved metadata and tracklist are laid over the
+    /// result, so edits made before a quit, a failure or a finished run
+    /// are all still there. A finished set remembers its files, and a
+    /// re-run replaces them. Ignored while another set is producing.
+    func reopen(recordID: UUID) async {
+        guard case .processing = state else {
+            guard let record = record(id: recordID) else {
+                return
+            }
+            await beginResolve(
+                record.sourceURL,
+                overlay: SavedDraftOverlay(record: record)
+            )
+            return
+        }
+    }
+
+    /// The identity of the set the workflow is currently about, if any.
+    var activeRecordID: UUID? {
+        switch state {
+        case .resolving(let phase):
+            phase.recordID
+        case .reviewing(let draft):
+            draft.historyID
+        case .processing(let processing):
+            processing.recordID
+        case .completed(let completed):
+            completed.recordID
+        case .failed(let failed):
+            failed.recordID
+        case .idle:
+            nil
+        }
+    }
+
+    private func beginResolve(_ sourceURL: String, overlay requested: SavedDraftOverlay?) async {
+        var overlay = requested
+        if overlay == nil,
+           let finished = existingRecord(matching: sourceURL),
+           finished.status == .completed {
+            // Pasting the link of a finished set starts it over with fresh
+            // metadata, but it is still that set: a run replaces its files
+            // and walking away leaves it finished.
+            overlay = SavedDraftOverlay(filesOf: finished)
+        }
         do {
             try cancelActiveWorkForNewResolve()
         } catch {
@@ -92,15 +148,24 @@ final class WorkflowController {
 
         let record: HistoryRecord
         let isNewRecord: Bool
-        if let existing = existingRecord(matching: sourceURL) {
+        let reused = overlay.flatMap { self.record(id: $0.recordID) }
+            ?? existingRecord(matching: sourceURL)
+        if let existing = reused {
             // The same set was resolved before: refresh it in place and
             // move it to the top of Recent instead of duplicating it.
+            if overlay != nil, existing.status == .completed {
+                reopenedFinishedSets.insert(existing.id)
+            }
             existing.sourceURL = sourceURL
             existing.status = .resolving
             existing.stage = .resolving
             existing.errorSummary = nil
             existing.backendJobID = nil
-            existing.completedAt = nil
+            if overlay == nil {
+                // A plain re-resolve starts the set over; a reopen keeps
+                // the finished run's date until a re-run replaces it.
+                existing.completedAt = nil
+            }
             existing.updatedAt = Date()
             history.promote(existing)
             record = existing
@@ -158,7 +223,8 @@ final class WorkflowController {
                 try self.finishResolve(
                     response,
                     sourceURL: sourceURL,
-                    recordID: record.id
+                    recordID: record.id,
+                    overlay: overlay
                 )
             } catch is CancellationError {
                 return
@@ -727,13 +793,17 @@ final class WorkflowController {
     private func finishResolve(
         _ response: APIResolveResponse,
         sourceURL: String,
-        recordID: UUID
+        recordID: UUID,
+        overlay: SavedDraftOverlay?
     ) throws {
-        let draft = SetDraft(
+        var draft = SetDraft(
             historyID: recordID,
             sourceURL: sourceURL,
             response: response
         )
+        if let overlay {
+            overlay.apply(to: &draft)
+        }
         try persist(draft: draft)
         draftRevision += 1
         state = .reviewing(draft)
@@ -767,6 +837,14 @@ final class WorkflowController {
         record.errorSummary = nil
         record.metadataJSON = try APIJSON.encoder.encode(draft.metadata)
         record.tracklistJSON = try APIJSON.encoder.encode(draft.tracklist)
+        record.completedAt = nil
+        reopenedFinishedSets.remove(record.id)
+        if !draft.replacesOutputPaths.isEmpty {
+            // The record collects this run's files as they appear; the
+            // previous run's list is parked until the outcome is known.
+            replacedOutputs[record.id] = draft.replacesOutputPaths
+            record.outputPaths = []
+        }
         record.updatedAt = Date()
         try history.save()
     }
@@ -1053,7 +1131,8 @@ final class WorkflowController {
             try persistCompleted(
                 record: record,
                 jobID: snapshot.jobID,
-                outputPaths: record.outputPaths
+                outputPaths: record.outputPaths,
+                outputsAreFinal: true
             )
         case .failed:
             try persistTerminalFailure(
@@ -1156,10 +1235,7 @@ final class WorkflowController {
         }
         record.backendJobID = jobID
         record.stage = HistoryStage(event.stage)
-        if let filePath = event.filePath,
-           !record.outputPaths.contains(filePath) {
-            record.outputPaths.append(filePath)
-        }
+        noteOutput(event.filePath, on: record)
         let fallback = status == .cancelled ? "Cancelled" : "Processing failed"
         try persistTerminalFailure(
             record: record,
@@ -1176,14 +1252,12 @@ final class WorkflowController {
         guard let record = record(id: frozenDraft.historyID) else {
             throw WorkflowPersistenceError.missingRecord(frozenDraft.historyID)
         }
-        if let filePath = event.filePath,
-           !record.outputPaths.contains(filePath) {
-            record.outputPaths.append(filePath)
-        }
+        noteOutput(event.filePath, on: record)
         try persistCompleted(
             record: record,
             jobID: jobID,
-            outputPaths: record.outputPaths
+            outputPaths: record.outputPaths,
+            outputsAreFinal: false
         )
     }
 
@@ -1199,10 +1273,7 @@ final class WorkflowController {
         record.status = .processing
         record.stage = stage
         record.updatedAt = Date()
-        if let filePath = event.filePath,
-           !record.outputPaths.contains(filePath) {
-            record.outputPaths.append(filePath)
-        }
+        noteOutput(event.filePath, on: record)
         try history.save()
         state = .processing(
             ProcessingState(
@@ -1234,6 +1305,7 @@ final class WorkflowController {
         record.errorSummary = message
         record.completedAt = failedAt
         record.updatedAt = failedAt
+        restoreReplacedOutputs(on: record)
         try history.save()
         state = .failed(
             FailedJob(
@@ -1245,10 +1317,17 @@ final class WorkflowController {
         )
     }
 
+    /// - Parameter outputsAreFinal: whether `outputPaths` is the job's
+    ///   reconciled file list. The done event arrives first and, for a
+    ///   split job, names only the folder; the tracks follow in the job
+    ///   snapshot. Leftovers of a replaced run are removed only against
+    ///   that final list — anything less and the "stale" files would be
+    ///   the ones just written.
     private func persistCompleted(
         record: HistoryRecord,
         jobID: String,
-        outputPaths: [String]
+        outputPaths: [String],
+        outputsAreFinal: Bool
     ) throws {
         let completedAt = record.completedAt ?? Date()
         record.backendJobID = jobID
@@ -1257,6 +1336,15 @@ final class WorkflowController {
         record.errorSummary = nil
         record.outputPaths = outputPaths
         record.completedAt = completedAt
+        if replacedOutputs[record.id] != nil {
+            // A re-run rewrote the set: the files Apple Music was given are
+            // gone or changed.
+            record.importedAt = nil
+        }
+        if outputsAreFinal,
+           let previous = replacedOutputs.removeValue(forKey: record.id) {
+            outputCleanup.removeStale(previous: previous, current: outputPaths)
+        }
         record.updatedAt = Date()
         try history.save()
         state = .completed(
@@ -1277,6 +1365,9 @@ final class WorkflowController {
         record.stage = .done
         record.errorSummary = message
         record.updatedAt = Date()
+        // The final file list never came: the old files stay, since there
+        // is no way to tell them from what the run produced.
+        replacedOutputs.removeValue(forKey: record.id)
         try history.save()
         if case .completed(let completed) = state {
             state = .completed(
@@ -1294,10 +1385,24 @@ final class WorkflowController {
         _ outputPaths: [String],
         into record: HistoryRecord
     ) {
-        for outputPath in outputPaths
-        where !record.outputPaths.contains(outputPath) {
-            record.outputPaths.append(outputPath)
+        for outputPath in outputPaths {
+            noteOutput(outputPath, on: record)
         }
+    }
+
+    /// Records one produced path. A split job's done event points at the
+    /// album folder rather than a track; folders are for Finder, not for
+    /// the track list, and must never be trashed as a stale "file" later.
+    private func noteOutput(_ path: String?, on record: HistoryRecord) {
+        guard let path, !record.outputPaths.contains(path) else {
+            return
+        }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return
+        }
+        record.outputPaths.append(path)
     }
 
     private func persistNonterminalError(
@@ -1329,6 +1434,7 @@ final class WorkflowController {
             record.errorSummary = message
             record.completedAt = failedAt
             record.updatedAt = failedAt
+            restoreReplacedOutputs(on: record)
             try? history.save()
         }
         state = .failed(
@@ -1359,6 +1465,13 @@ final class WorkflowController {
               record.status == .resolving || record.status == .reviewing else {
             return
         }
+        if reopenedFinishedSets.remove(record.id) != nil,
+           record.restoreCompletedIfFilesRemain() {
+            // A finished set that was reopened and then left alone is
+            // still finished; its files never moved.
+            try history.save()
+            return
+        }
         let interruptedAt = Date()
         record.status = .interrupted
         record.errorSummary = "Interrupted by a newer workflow."
@@ -1367,21 +1480,13 @@ final class WorkflowController {
         try history.save()
     }
 
-    private var activeRecordID: UUID? {
-        switch state {
-        case .resolving(let phase):
-            phase.recordID
-        case .reviewing(let draft):
-            draft.historyID
-        case .processing(let processing):
-            processing.recordID
-        case .completed(let completed):
-            completed.recordID
-        case .failed(let failed):
-            failed.recordID
-        case .idle:
-            nil
+    /// A re-run that did not finish leaves the previous files in place;
+    /// put them back on the record so the set is not shown as empty.
+    private func restoreReplacedOutputs(on record: HistoryRecord) {
+        guard let previous = replacedOutputs.removeValue(forKey: record.id) else {
+            return
         }
+        merge(previous, into: record)
     }
 
     private var activeBackendJobID: String? {
@@ -1430,6 +1535,46 @@ final class WorkflowController {
 
 private enum WorkflowPersistenceError: Error {
     case missingRecord(UUID)
+}
+
+/// What a record remembers of a set beyond its URL: the metadata and
+/// tracklist as last saved, and the files a finished run produced. Laid
+/// over a fresh resolve when the set is reopened.
+struct SavedDraftOverlay: Sendable {
+    let recordID: UUID
+    let metadata: APIMetadataFields?
+    let tracklist: APITracklist?
+    let outputPaths: [String]
+
+    init(record: HistoryRecord) {
+        recordID = record.id
+        metadata = record.metadataJSON.flatMap {
+            try? APIJSON.decoder.decode(APIMetadataFields.self, from: $0)
+        }
+        tracklist = record.tracklistJSON.flatMap {
+            try? APIJSON.decoder.decode(APITracklist.self, from: $0)
+        }
+        outputPaths = record.outputPaths
+    }
+
+    /// Only the files: a fresh start on a set that already has a run.
+    init(filesOf record: HistoryRecord) {
+        recordID = record.id
+        metadata = nil
+        tracklist = nil
+        outputPaths = record.outputPaths
+    }
+
+    func apply(to draft: inout SetDraft) {
+        if let metadata {
+            draft.metadata = metadata
+        }
+        if let tracklist, !tracklist.tracks.isEmpty {
+            draft.tracklist = tracklist
+            draft.split = true
+        }
+        draft.replacesOutputPaths = outputPaths
+    }
 }
 
 private enum ProgressStreamOutcome: Sendable {

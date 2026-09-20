@@ -25,6 +25,29 @@ final class HistoryStore: HistoryStoreProtocol {
         )
         records = try modelContext.fetch(descriptor)
         try collapseDuplicateSets()
+        try dropFoldersFromOutputs()
+    }
+
+    /// Earlier builds filed a split job's album folder among its tracks,
+    /// so a 31-track set read as 32. Folders are not outputs.
+    private func dropFoldersFromOutputs() throws {
+        var changed = false
+        for record in records where !record.outputPaths.isEmpty {
+            let files = record.outputPaths.filter { path in
+                var isDirectory: ObjCBool = false
+                let exists = FileManager.default.fileExists(
+                    atPath: path, isDirectory: &isDirectory
+                )
+                return !(exists && isDirectory.boolValue)
+            }
+            if files.count != record.outputPaths.count {
+                record.outputPaths = files
+                changed = true
+            }
+        }
+        if changed {
+            try modelContext.save()
+        }
     }
 
     /// Removes duplicate Recent entries left over for the same video,

@@ -4,6 +4,7 @@ import asyncio
 import os
 import queue
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,7 @@ from .core import (
     tracklist_1001,
 )
 from .core.job_state import JobCancelled, JobRecord
+from .core.master_cache import MasterCache
 from .models import (
     DownloadRequest,
     JobSnapshot,
@@ -59,6 +61,26 @@ def render_index() -> str:
     """
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     return html.replace("__APP_NAME__", APP_NAME)
+
+
+def _private_copy(source: Path, target: Path) -> None:
+    """A copy of `source` at `target` that later stages may rewrite freely.
+
+    Not a hard link: tagging rewrites files in place and would corrupt the
+    cached master through the shared inode. On APFS `cp -c` clones the file
+    (instant, copy-on-write); elsewhere a plain copy does the same job slowly.
+    """
+    try:
+        done = subprocess.run(
+            ["cp", "-c", str(source), str(target)],
+            capture_output=True,
+            check=False,
+        )
+        if done.returncode == 0 and target.exists():
+            return
+    except OSError:
+        pass
+    shutil.copy2(source, target)
 
 
 class JobManager:
@@ -171,46 +193,95 @@ class JobManager:
             if attempt < CALLBACK_ATTEMPTS - 1:
                 time.sleep(CALLBACK_RETRY_DELAY)
 
+    def _master_cache(self) -> MasterCache | None:
+        """The encoded-master cache from config, or None when not configured."""
+        root = getattr(self.cfg, "master_cache_dir", None)
+        budget = getattr(self.cfg, "master_cache_bytes", 0)
+        if root is None or budget <= 0:
+            return None
+        return MasterCache(Path(root), budget)
+
+    def _encoded_master(
+        self,
+        job_id: str,
+        req: DownloadRequest | SplitDownloadRequest,
+        tmpdir: Path,
+        target: Path,
+        download_message: str,
+        encode_message: str,
+    ) -> Path:
+        """Produces the encoded full-length master at `target`.
+
+        A set that was produced before is served from the master cache, so a
+        re-run with a corrected tracklist skips straight to splitting. The
+        cached copy is never handed out directly: later stages may rewrite
+        tags in place, so it is linked (or copied) into the job's folder.
+        """
+        token = self.jobs[job_id].token
+        cache = self._master_cache()
+        cached = cache.lookup(req.video_id, req.format) if cache else None
+        if cached is not None:
+            _private_copy(cached, target)
+            self._emit(job_id, ProgressEvent(
+                stage="download", pct=100.0, message="Using the audio already on this Mac",
+            ))
+            self._emit(job_id, ProgressEvent(
+                stage="encode", pct=100.0, message="Already encoded",
+            ))
+            token.raise_if_cancelled()
+            return target
+
+        self._emit(job_id, ProgressEvent(stage="download", pct=0.0, message="Starting download"))
+
+        def on_download(progress: downloader.DownloadProgress) -> None:
+            self._emit(job_id, ProgressEvent(
+                stage="download",
+                pct=progress.pct,
+                message=download_message,
+                downloaded_bytes=progress.downloaded_bytes,
+                total_bytes=progress.total_bytes,
+                speed_bytes_per_second=progress.speed_bytes_per_second,
+                eta_seconds=progress.eta_seconds,
+            ))
+
+        src = downloader.download_audio(
+            req.url,
+            tmpdir,
+            on_download,
+            self.cfg.pot_provider_url,
+            cancellation=token,
+        )
+
+        self._emit(job_id, ProgressEvent(stage="encode", pct=0.0, message=encode_message))
+        downloader.encode(
+            src,
+            target,
+            req.format,
+            on_progress=lambda pct: self._emit(job_id, ProgressEvent(
+                stage="encode",
+                pct=pct,
+                message="Encoded" if pct >= 100.0 else encode_message,
+            )),
+            cancellation=token,
+        )
+        if cache:
+            cache.store(target, req.video_id, req.format)
+        return target
+
     def _process(self, job_id: str, req: DownloadRequest) -> list[str]:
         token = self.jobs[job_id].token
         token.raise_if_cancelled()
         with tempfile.TemporaryDirectory(prefix="setlist-") as tmp:
             tmpdir = Path(tmp)
 
-            self._emit(job_id, ProgressEvent(stage="download", pct=0.0, message="Starting download"))
-
-            def on_download(progress: downloader.DownloadProgress) -> None:
-                self._emit(job_id, ProgressEvent(
-                    stage="download",
-                    pct=progress.pct,
-                    message="Downloading audio",
-                    downloaded_bytes=progress.downloaded_bytes,
-                    total_bytes=progress.total_bytes,
-                    speed_bytes_per_second=progress.speed_bytes_per_second,
-                    eta_seconds=progress.eta_seconds,
-                ))
-
-            src = downloader.download_audio(
-                req.url,
-                tmpdir,
-                on_download,
-                self.cfg.pot_provider_url,
-                cancellation=token,
-            )
-
             target = "ALAC (lossless)" if req.format == "alac" else "AAC 256 kbps"
-            self._emit(job_id, ProgressEvent(stage="encode", pct=0.0, message=f"Encoding to {target}"))
-            encoded = tmpdir / "encoded.m4a"
-            downloader.encode(
-                src,
-                encoded,
-                req.format,
-                on_progress=lambda pct: self._emit(job_id, ProgressEvent(
-                    stage="encode",
-                    pct=pct,
-                    message="Encoded" if pct >= 100.0 else f"Encoding to {target}",
-                )),
-                cancellation=token,
+            encoded = self._encoded_master(
+                job_id,
+                req,
+                tmpdir,
+                tmpdir / "encoded.m4a",
+                download_message="Downloading audio",
+                encode_message=f"Encoding to {target}",
             )
 
             if req.cover == "keep":
@@ -253,40 +324,14 @@ class JobManager:
         with tempfile.TemporaryDirectory(prefix="setlist-") as tmp:
             tmpdir = Path(tmp)
 
-            self._emit(job_id, ProgressEvent(stage="download", pct=0.0, message="Starting download"))
-
-            def on_download(progress: downloader.DownloadProgress) -> None:
-                self._emit(job_id, ProgressEvent(
-                    stage="download",
-                    pct=progress.pct,
-                    message="Downloading full set",
-                    downloaded_bytes=progress.downloaded_bytes,
-                    total_bytes=progress.total_bytes,
-                    speed_bytes_per_second=progress.speed_bytes_per_second,
-                    eta_seconds=progress.eta_seconds,
-                ))
-
-            src = downloader.download_audio(
-                req.url,
-                tmpdir,
-                on_download,
-                self.cfg.pot_provider_url,
-                cancellation=token,
-            )
-
             target = "ALAC (lossless)" if req.format == "alac" else "AAC 256 kbps"
-            self._emit(job_id, ProgressEvent(stage="encode", pct=0.0, message=f"Encoding full set to {target}"))
-            full = tmpdir / "full.m4a"
-            downloader.encode(
-                src,
-                full,
-                req.format,
-                on_progress=lambda pct: self._emit(job_id, ProgressEvent(
-                    stage="encode",
-                    pct=pct,
-                    message="Encoded" if pct >= 100.0 else f"Encoding full set to {target}",
-                )),
-                cancellation=token,
+            full = self._encoded_master(
+                job_id,
+                req,
+                tmpdir,
+                tmpdir / "full.m4a",
+                download_message="Downloading full set",
+                encode_message=f"Encoding full set to {target}",
             )
 
             if req.cover == "keep":

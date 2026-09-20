@@ -58,9 +58,14 @@ struct ReviewView: View {
         }
     }
 
+    /// A finished set reopened for changes; running it replaces its files.
+    private var isEditingFinishedSet: Bool {
+        !draft.replacesOutputPaths.isEmpty
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("REVIEW THE SET")
+            Text(isEditingFinishedSet ? "EDIT THE SET" : "REVIEW THE SET")
                 .font(.caption.weight(.semibold))
                 .tracking(2.2)
                 .foregroundStyle(SetlistTheme.cherry)
@@ -121,6 +126,11 @@ struct ReviewView: View {
                 Task {
                     await fetchTracklist()
                 }
+            },
+            searchInBrowser: {
+                NSWorkspace.shared.open(
+                    TracklistWebFetcher.browserSearchURL(query: searchQuery)
+                )
             }
         )
     }
@@ -128,7 +138,8 @@ struct ReviewView: View {
     private var footer: some View {
         GlassEffectContainer(spacing: 16) {
             HStack(spacing: 14) {
-                Button("Discard", role: .cancel) {
+                // Leaving an edit keeps the finished set exactly as it is.
+                Button(isEditingFinishedSet ? "Cancel Edit" : "Discard", role: .cancel) {
                     workflow.startOver()
                 }
 
@@ -138,6 +149,13 @@ struct ReviewView: View {
                     Text(issue.message)
                         .font(.callout)
                         .foregroundStyle(.orange)
+                } else if isEditingFinishedSet {
+                    Text(
+                        "Replaces the \(draft.replacesOutputPaths.count) "
+                            + "files on disk; the old ones go to the Trash."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(SetlistTheme.mutedPaper)
                 }
 
                 Button {
@@ -145,16 +163,25 @@ struct ReviewView: View {
                         await workflow.process()
                     }
                 } label: {
-                    Label("Download", systemImage: "arrow.down.circle.fill")
-                        .font(.body.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 2)
+                    Label(
+                        isEditingFinishedSet ? "Replace Files" : "Download",
+                        systemImage: isEditingFinishedSet
+                            ? "arrow.triangle.2.circlepath.circle.fill"
+                            : "arrow.down.circle.fill"
+                    )
+                    .font(.body.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 2)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(SetlistTheme.cherry)
                 .keyboardShortcut(.defaultAction)
                 .disabled(!draft.canStartProcessing)
-                .accessibilityLabel("Download the set")
+                .accessibilityLabel(
+                    isEditingFinishedSet
+                        ? "Run the set again and replace its files"
+                        : "Download the set"
+                )
             }
             .padding(14)
             .glassEffect(
@@ -164,13 +191,15 @@ struct ReviewView: View {
         }
     }
 
-    private func fetchTracklist() async {
+    private var searchQuery: String {
         let query = [draft.metadata.artist, draft.metadata.title]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        await workflow.autoTracklist(
-            query: query.isEmpty ? draft.detectedLine : query
-        )
+        return query.isEmpty ? draft.detectedLine : query
+    }
+
+    private func fetchTracklist() async {
+        await workflow.autoTracklist(query: searchQuery)
     }
 }
 

@@ -137,6 +137,28 @@ final class HistoryStoreTests: XCTestCase {
         )
     }
 
+    func testLaunchDropsAlbumFoldersMisfiledAmongTheOutputTracks() throws {
+        // Earlier builds kept a split job's folder as if it were a track.
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("setlist-folder-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let track = folder.appendingPathComponent("01 - A.m4a").path
+        let container = try makeContainer()
+        let seed = try HistoryStore(modelContext: ModelContext(container))
+        let record = HistoryRecord(
+            sourceURL: "https://youtu.be/abcdefghijk",
+            status: .completed,
+            outputPaths: [folder.path, track]
+        )
+        try seed.insert(record)
+        try seed.save()
+
+        let store = try HistoryStore(modelContext: ModelContext(container))
+
+        XCTAssertEqual(store.records.first?.outputPaths, [track])
+    }
+
     private func makeStore() throws -> HistoryStore {
         try HistoryStore(modelContext: ModelContext(makeContainer()))
     }
