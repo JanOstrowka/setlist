@@ -6,7 +6,7 @@ One webhook, two entry paths:
 A) Hosted site (https://list-setlist.vercel.app — see docs/hosted-site.md)
    You review/edit metadata + tracklist IN the site (that's the human-in-the-loop),
    then click Download:
-   → POST https://janostrowka.app.n8n.cloud/webhook/setlist-submit  (header X-N8N-Auth)
+   → POST https://your-instance.app.n8n.cloud/webhook/setlist-submit  (header X-N8N-Auth)
      body: { url, video_id, format, split, metadata, tracks }   ← full approved job
      → n8n validates the token → builds the job → calls the Mac helper through the
        tunnel (/download or /download-split, callback_url = n8n's resume URL)
@@ -25,7 +25,7 @@ Files land in ~/Music/YouTube Sets on the Mac — nothing needs to be downloaded
 ```
 
 The n8n workflow is **"Setlist — YouTube to Apple Music"** (ID `HlTQdjrTUZ3D11aM`,
-<https://janostrowka.app.n8n.cloud/workflow/HlTQdjrTUZ3D11aM>). It is a **draft**;
+<https://your-instance.app.n8n.cloud/workflow/<id>>). It is a **draft**;
 publish it after the setup below.
 
 ---
@@ -64,7 +64,7 @@ Restart the app after editing `.env` (`./run.sh`).
 ## 2. Tunnel: Tailscale Funnel (recommended — already installed)
 
 Tailscale is installed on this Mac (`/Applications/Tailscale.app`) and logged in; the machine's
-tailnet name is **`macbook-pro.tailb2c1e.ts.net`**. Funnel exposes a single HTTPS port publicly
+tailnet name is **`your-mac.your-tailnet.ts.net`**. Funnel exposes a single HTTPS port publicly
 with a trusted certificate — no extra software, no random URLs that change per run (unlike
 cloudflared quick tunnels / free ngrok).
 
@@ -80,8 +80,8 @@ Start the tunnel (persists in the background until reset):
 tailscale funnel --bg 8765
 ```
 
-This maps **`https://macbook-pro.tailb2c1e.ts.net`** (port 443) → `http://127.0.0.1:8765`,
-i.e. the public URL is the Mac app root: `https://macbook-pro.tailb2c1e.ts.net/resolve`, etc.
+This maps **`https://your-mac.your-tailnet.ts.net`** (port 443) → `http://127.0.0.1:8765`,
+i.e. the public URL is the Mac app root: `https://your-mac.your-tailnet.ts.net/resolve`, etc.
 That hostname is the **`macBaseUrl`** value for the n8n Config node.
 
 - First run may print a link to enable the Funnel node attribute for your tailnet — approve it
@@ -140,12 +140,12 @@ option explicitly on the *Receive YouTube URL* node.
 
 Steps:
 
-1. Open <https://janostrowka.app.n8n.cloud/workflow/HlTQdjrTUZ3D11aM> → **Config** node and set:
-   - `macBaseUrl` — the tunnel URL (pre-filled with `https://macbook-pro.tailb2c1e.ts.net`);
+1. Open <https://your-instance.app.n8n.cloud/workflow/<id>> → **Config** node and set:
+   - `macBaseUrl` — the tunnel URL (pre-filled with `https://your-mac.your-tailnet.ts.net`);
    - `macApiToken` — copy `API_AUTH_TOKEN` from the repo's `.env`;
    - `webhookToken` — copy `N8N_WEBHOOK_TOKEN` from the repo's `.env`.
 2. **Publish** the workflow (top-right toggle). The production webhook becomes
-   `https://janostrowka.app.n8n.cloud/webhook/setlist-submit`.
+   `https://your-instance.app.n8n.cloud/webhook/setlist-submit`.
 
 Webhook auth note: MCP cannot create n8n credentials, so the trigger authenticates via an
 explicit IF check (`X-N8N-Auth` header vs `webhookToken`) — functional immediately, wrong/missing
@@ -174,7 +174,7 @@ Create a new Shortcut in the Shortcuts app:
 
 1. Shortcut settings (ⓘ) → enable **Show in Share Sheet**; set accepted types to **URLs**.
 2. Add action **Get Contents of URL** and configure:
-   - URL: `https://janostrowka.app.n8n.cloud/webhook/setlist-submit`
+   - URL: `https://your-instance.app.n8n.cloud/webhook/setlist-submit`
    - Method: **POST**
    - Headers: add `X-N8N-Auth` = the `N8N_WEBHOOK_TOKEN` value from `.env`
    - Request Body: **JSON**, one field: `url` = **Shortcut Input** (the shared URL)
@@ -198,11 +198,11 @@ paused execution in n8n and click the form URL from there.
 2. Restart the Mac app: `./run.sh` — or install it as a login service: `./helper/install.sh`.
 3. Start the tunnel: `tailscale funnel --bg 8765` (approve the Funnel attribute on first run).
 4. Sanity check auth from another network:
-   `curl -s https://macbook-pro.tailb2c1e.ts.net/recent` → 401;
+   `curl -s https://your-mac.your-tailnet.ts.net/recent` → 401;
    with `-H "Authorization: Bearer $API_AUTH_TOKEN"` → 200.
 5. Paste the three Config values in the n8n workflow (section 3) and **publish** it.
 6. Hosted site: open <https://list-setlist.vercel.app> in Chrome on the Mac, open Settings
-   (gear), paste the webhook URL (`https://janostrowka.app.n8n.cloud/webhook/setlist-submit`)
+   (gear), paste the webhook URL (`https://your-instance.app.n8n.cloud/webhook/setlist-submit`)
    and the `N8N_WEBHOOK_TOKEN` value. The helper pill should already be green.
 7. Build the Apple Shortcut (section 4) if you want the share-sheet path too.
 8. Run one real set end-to-end (site Download click, or share from the phone).

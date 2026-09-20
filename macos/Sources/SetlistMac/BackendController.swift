@@ -48,13 +48,9 @@ struct BackendHealth: Codable, Equatable, Sendable {
 
 @MainActor
 final class BackendController: ObservableObject {
-    static let shared: BackendController = {
-        let projectRoot = BackendConfiguration.bundled()?.projectRoot
-            ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        return BackendController(
-            configuration: BackendConfiguration(projectRoot: projectRoot)
-        )
-    }()
+    static let shared = BackendController(
+        configuration: BackendConfiguration.detect()
+    )
 
     typealias HealthCheck = (URL) async -> BackendHealth?
     typealias Launcher = (BackendConfiguration) throws -> Process
@@ -185,18 +181,41 @@ final class BackendController: ObservableObject {
     nonisolated private static func launch(
         configuration: BackendConfiguration
     ) throws -> Process {
-        guard FileManager.default.isExecutableFile(
-            atPath: configuration.runScriptURL.path
-        ) else {
-            throw BackendLaunchError.runScriptMissing(
-                configuration.runScriptURL.path
+        let process: Process
+        switch configuration.engine {
+        case .source(let projectRoot):
+            process = try sourceProcess(
+                projectRoot: projectRoot,
+                configuration: configuration
             )
+        case .bundled(let engine):
+            process = try bundledProcess(
+                engine: engine,
+                configuration: configuration
+            )
+        }
+
+        let logHandle = openLogFile(at: configuration.logFileURL)
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+        try process.run()
+        return process
+    }
+
+    /// Development: the checkout's `run.sh` owns the venv and `.env`.
+    nonisolated private static func sourceProcess(
+        projectRoot: URL,
+        configuration: BackendConfiguration
+    ) throws -> Process {
+        let runScript = projectRoot.appendingPathComponent("run.sh")
+        guard FileManager.default.isExecutableFile(atPath: runScript.path) else {
+            throw BackendLaunchError.runScriptMissing(runScript.path)
         }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = [configuration.runScriptURL.path]
-        process.currentDirectoryURL = configuration.projectRoot
+        process.arguments = [runScript.path]
+        process.currentDirectoryURL = projectRoot
         var environment = ProcessInfo.processInfo.environment
         environment["OPEN_BROWSER"] = "0"
         environment["PATH"] = [
@@ -205,11 +224,62 @@ final class BackendController: ObservableObject {
             environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin",
         ].joined(separator: ":")
         process.environment = environment
+        return process
+    }
 
-        let logHandle = openLogFile(at: configuration.logFileURL)
-        process.standardOutput = logHandle
-        process.standardError = logHandle
-        try process.run()
+    /// Distribution: the relocatable CPython inside the app runs uvicorn
+    /// directly. Everything the engine needs is inside the bundle, and
+    /// nothing it does may write there (the bundle is code-signed), so
+    /// bytecode caching is off and yt-dlp updates go to a user overlay.
+    nonisolated private static func bundledProcess(
+        engine: BackendConfiguration.BundledEngine,
+        configuration: BackendConfiguration
+    ) throws -> Process {
+        guard engine.isInstalled else {
+            throw BackendLaunchError.engineMissing(engine.pythonURL.path)
+        }
+
+        try configuration.ensureSettingsFileExists()
+        try FileManager.default.createDirectory(
+            at: configuration.userPackagesURL,
+            withIntermediateDirectories: true
+        )
+
+        let process = Process()
+        process.executableURL = engine.pythonURL
+        var arguments = [
+            "-m", "uvicorn", "app.main:app",
+            "--host", "127.0.0.1",
+            "--port", String(configuration.port),
+        ]
+        if FileManager.default.fileExists(atPath: configuration.settingsFileURL.path) {
+            arguments += ["--env-file", configuration.settingsFileURL.path]
+        }
+        process.arguments = arguments
+        process.currentDirectoryURL = engine.backendRoot
+
+        // Start from a clean environment: a developer's PYTHONHOME or
+        // Homebrew PATH must never leak into a shipped engine.
+        var environment: [String: String] = [:]
+        for key in ["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"] {
+            if let value = ProcessInfo.processInfo.environment[key] {
+                environment[key] = value
+            }
+        }
+        environment["PATH"] = [
+            engine.binDirectory.path,
+            "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+        ].joined(separator: ":")
+        environment["PYTHONPATH"] = [
+            configuration.userPackagesURL.path,
+            engine.backendRoot.path,
+        ].joined(separator: ":")
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONUNBUFFERED"] = "1"
+        environment["OPEN_BROWSER"] = "0"
+        environment["YT_DLP_UPDATE_TARGET"] = configuration.userPackagesURL.path
+        process.environment = environment
         return process
     }
 
@@ -244,11 +314,14 @@ final class BackendController: ObservableObject {
 
 private enum BackendLaunchError: LocalizedError {
     case runScriptMissing(String)
+    case engineMissing(String)
 
     var errorDescription: String? {
         switch self {
         case .runScriptMissing(let path):
             return "Could not find the Setlist server at \(path). Rebuild the app after moving the project."
+        case .engineMissing(let path):
+            return "The media engine inside the app is missing (\(path)). Reinstall Setlist from the disk image."
         }
     }
 }

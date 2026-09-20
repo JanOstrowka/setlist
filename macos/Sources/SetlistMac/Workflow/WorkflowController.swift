@@ -205,6 +205,10 @@ final class WorkflowController {
         }
     }
 
+    nonisolated static let noTracklistFoundNote =
+        "No matching tracklist on 1001tracklists. Paste a tracklist URL "
+        + "or the track list itself, or add tracks manually."
+
     func autoTracklist(query: String) async {
         guard case .reviewing(let draft) = state else {
             return
@@ -224,11 +228,17 @@ final class WorkflowController {
                 // The backend search needs a Firecrawl key; without one it
                 // comes back empty. Fall back to an in-app search and an
                 // in-app render of the page — no key required.
-                guard let pageFetcher,
-                      let found = try? await pageFetcher.searchTracklistURL(
-                        query: query
-                      ) else {
+                guard let pageFetcher else {
                     return result
+                }
+                // Once the in-app path has run, the backend's key-related
+                // note no longer describes what happened; say what did.
+                var searched = result
+                searched.note = Self.noTracklistFoundNote
+                guard let found = try? await pageFetcher.searchTracklistURL(
+                    query: query
+                ) else {
+                    return searched
                 }
                 do {
                     let extracted = try await pageFetcher.fetchTracklistText(
@@ -242,7 +252,9 @@ final class WorkflowController {
                         "Found on 1001tracklists: \(found.absoluteString)"
                     return tracklist
                 } catch {
-                    return result
+                    searched.note = "Found a 1001tracklists page but could not "
+                        + "read it — paste its URL or the tracklist text instead."
+                    return searched
                 }
             }
         )

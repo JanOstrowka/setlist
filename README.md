@@ -1,163 +1,105 @@
-# Setlist
+<img src=".github/icon.png" width="200" alt="Setlist app icon" align="left"/>
 
-A personal macOS tool: YouTube → Apple Music. Paste a YouTube URL → download
-the best audio → transcode losslessly to Apple-Music-compatible **ALAC `.m4a`** (or AAC-256)
-→ embed a square JPEG cover + AI-assisted, editable metadata → save a fully tagged file you
-drag into Apple Music. Files-only: nothing is auto-imported.
+<div>
+<h3>Setlist</h3>
+<p>Turns a YouTube DJ set or concert into a tagged, gapless album in Apple Music.
+Paste a link, review the tracklist, click Download — everything runs on your own Mac.</p>
+<a href="https://github.com/JanOstrowka/setlist/releases/latest"><img src="https://img.shields.io/badge/Download_for_macOS-1c1c1e?style=for-the-badge&logo=apple&logoColor=white" height="40" alt="Download for macOS"/></a>
+</div>
 
-Three ways to use it (all end with files in `~/Music` on your Mac):
+<br/><br/>
 
-- **Local**: `./run.sh` → <http://127.0.0.1:8765> (loopback only, no config needed).
-- **Native Mac app** (macOS 26+): `./scripts/build_macos_app.sh`, then open `dist/Setlist.app`.
-  A fully native SwiftUI experience over the same local backend: paste-first landing,
-  review workspace with a YouTube preview, per-track production progress, and an
-  Add to Apple Music finish.
-- **Hosted site**: <https://list-setlist.vercel.app> — the same UI served from Vercel,
-  talking to the local helper directly, optionally routing jobs through n8n for an
-  audit trail. See `docs/hosted-site.md`.
-- **iPhone share sheet**: an Apple Shortcut posts to n8n, which drives the Mac over a
-  Tailscale Funnel with a form-based approval step. See `docs/n8n-integration.md`.
+<div align="center">
+<a href="https://github.com/JanOstrowka/setlist/releases"><img src="https://img.shields.io/github/downloads/JanOstrowka/setlist/total.svg?style=flat" alt="downloads"/></a>
+<a href="https://github.com/JanOstrowka/setlist/releases"><img src="https://img.shields.io/github/release-pre/JanOstrowka/setlist.svg?style=flat" alt="latest version"/></a>
+<a href="https://github.com/JanOstrowka/setlist/blob/main/LICENSE"><img src="https://img.shields.io/github/license/JanOstrowka/setlist.svg?style=flat" alt="license"/></a>
+<a href="https://github.com/JanOstrowka/setlist"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Apple%20Silicon-blue.svg?style=flat" alt="platform"/></a>
 
-> The product name ("Setlist") lives in a single place — `APP_NAME` in `app/config.py`,
-> mirrored here and in `pyproject.toml`. The web UI is rendered from an `__APP_NAME__`
-> placeholder, so renaming touches one constant.
+<br/>
+<br/>
 
-## Prerequisites
+<img src=".github/screenshot-complete.png" width="824" alt="Setlist showing a finished set, ready to open in Apple Music"/><br/>
 
-- macOS, Python 3.11+
-- **ffmpeg** (required): `brew install ffmpeg`
-- **AtomicParsley** (optional cover fallback): `brew install atomicparsley`
-- Xcode Command Line Tools (only required to build the menu bar app)
+</div>
 
-## Setup
+<hr>
 
-```bash
-cp .env.example .env   # then edit .env and add your keys
-./run.sh               # creates .venv, installs, opens the browser
+## Download
+
+Go to [Releases](https://github.com/JanOstrowka/setlist/releases) and download the latest `.dmg`.
+Everything the app needs — the media engine, `ffmpeg`, `yt-dlp` — ships inside it. There is nothing else to install.
+
+## Major features
+
+- Paste a YouTube URL and get a finished album: best-quality audio, encoded to Apple-Music-native **ALAC** (or AAC 256), tagged, with a square cover.
+- Finds the tracklist for you — YouTube chapters, description timestamps, or 1001tracklists — and cuts the set into per-track files **losslessly** at the cue points.
+- Review before anything is written: edit title, artist, album, year, genre, and every cue; preview any cue in the embedded player.
+- **Add to Apple Music** in one click when the set is done; files import as a single gapless album.
+- Remembers every set in a **Recent** sidebar; one set is produced at a time, with live download speed, ETA and per-track status.
+- Optional **OpenAI** key cleans up titles, artists and genres. Without it, Setlist parses the video title.
+- Runs from the menu bar. Nothing leaves your Mac except the requests to YouTube.
+- Completely free and open source.
+
+### Screenshots
+
+<div align="center">
+<img src=".github/screenshot-landing.png" width="824" alt="Setlist landing view with the paste field"/>
+</div>
+
+## How to install and use the app
+
+1. [Download the app](https://github.com/JanOstrowka/setlist/releases/latest) and open the `.dmg`.
+2. Drag **Setlist** into your **Applications** folder.
+3. Open it. macOS will say it "could not verify" the app, because Setlist is a free project without an Apple Developer ID. Click **Done**, then go to **System Settings » Privacy & Security**, scroll down and click **Open Anyway** (or right-click the app » **Open**). You only do this once.
+4. Paste a YouTube URL and click **Resolve**.
+5. Check the metadata and tracklist, then click **Download**.
+6. When it's done, click **Add to Apple Music**. The first time, macOS asks whether Setlist may control Music — that permission is what performs the import.
+7. Open **Settings…** (`⌘,`) to add an OpenAI key, pick the output folder (default `~/Music/YouTube Sets`), or switch to AAC.
+
+### macOS compatibility
+
+| Setlist version | macOS version                     |
+| --------------- | --------------------------------- |
+| v0.1.0          | Tahoe 26 or newer, Apple Silicon  |
+
+### A note on YouTube
+
+Setlist downloads audio from YouTube on your Mac for your own library, the same way `yt-dlp` does. Whether that's allowed for a given video depends on your local law and the rights of the video's owner. The app is a tool; how you use it is up to you.
+
+## Contributing to the project
+
+Issues and pull requests are welcome. Before a large change, open an issue first so we can talk it through.
+
+## How to build
+
+### Required
+
+- Xcode 27 / Swift 6.2
+- [uv](https://docs.astral.sh/uv/) (`brew install uv`) — fetches the CPython that gets bundled
+- Python 3.11+ and `ffmpeg` only if you want to run the engine from source (`./run.sh`)
+
+### Build steps
+
+```sh
+git clone https://github.com/JanOstrowka/setlist.git
+cd setlist
+./scripts/build_macos_app.sh    # → dist/Setlist.app
+./scripts/build_dmg.sh          # → dist/Setlist-<version>-arm64.dmg
 ```
 
-`run.sh` starts the server on `http://127.0.0.1:8765` (loopback only) and opens your browser.
+The build bundles a relocatable Python, the backend, and static `ffmpeg`/`ffprobe` into the `.app` and signs it ad-hoc. Configuration keys, the web UI, tests, and the output layout are described in [docs/development.md](docs/development.md).
 
-### Native Mac app (macOS 26+)
+### Third party dependencies
 
-Build and open the native app:
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — download
+- [FFmpeg](https://ffmpeg.org) — encode, split, cover art; static macOS builds by [Martin Riedl](https://ffmpeg.martin-riedl.de)
+- [mutagen](https://github.com/quodlibet/mutagen) — MP4 tagging
+- [FastAPI](https://fastapi.tiangolo.com) + [uvicorn](https://www.uvicorn.org) — the local engine API
+- [Pillow](https://python-pillow.org), [httpx](https://www.python-httpx.org), [pydantic](https://docs.pydantic.dev), [python-dotenv](https://github.com/theskumar/python-dotenv)
+- [openai](https://github.com/openai/openai-python) — optional metadata cleanup
+- [python-build-standalone](https://github.com/astral-sh/python-build-standalone) via `uv` — the bundled interpreter
 
-```bash
-./scripts/build_macos_app.sh
-open dist/Setlist.app
-```
+## Credits
 
-The app lives in the menu bar and opens a native SwiftUI window — the Python backend
-runs invisibly as the media engine. Highlights:
-
-- **Paste-first landing** with URL validation and a durable **Recent** sidebar
-  (SwiftData) that remembers every set: queued, processing, completed, failed,
-  cancelled, and interrupted.
-- **Review workspace**: native metadata editor, editable tracklist with cue
-  validation and drag reordering, and an embedded YouTube preview player that
-  seeks to any cue (the only web view in the app, scoped to YouTube).
-- **Production scene**: stage rail (Download → Encode → Split → Tag), live overall
-  percent with download speed/ETA, and per-track cutting/tagging/ready statuses.
-  One set is produced at a time.
-- **Completion**: finished tracks flow into your Mac, then an **Add to Apple Music**
-  CTA imports them via Music automation (macOS asks for permission the first time);
-  Reveal in Finder is one click away. Nothing is imported without your say-so.
-- **Safety**: the app attaches only to a server that identifies itself as the
-  Setlist engine; quitting during production asks first, cancels the job cleanly,
-  and interrupted sets are recovered into Recent on the next launch. Reduce Motion
-  swaps animations for crossfades.
-
-The build keeps the Python backend in the source checkout; rebuild the app after
-moving the repository. A later distribution build can bundle the backend, ffmpeg,
-signing, and notarization into a portable `.app`.
-
-To run it automatically at login instead (the "helper" behind the hosted site):
-
-```bash
-./helper/install.sh    # launchd LaunchAgent; logs to ~/Library/Logs/setlist-helper.log
-./helper/uninstall.sh  # stop + remove
-```
-
-## Configuration (`.env`)
-
-| Key | Default | Notes |
-|-----|---------|-------|
-| `OPENAI_API_KEY` | — | Required for AI metadata; without it, falls back to title parsing |
-| `FIRECRAWL_API_KEY` | — | Optional web enrichment; skipped if unset |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Cheap, fast default |
-| `OUTPUT_DIR` | `~/Music/YouTube Sets` | Output folder you drag into Apple Music; created on first run |
-| `DEFAULT_FORMAT` | `alac` | UI toggle switches to `aac256` |
-| `PORT` | `8765` | Loopback server port |
-| `POT_PROVIDER_URL` | empty | Optional PO-token provider sidecar for YouTube bot checks |
-| `CORS_ORIGINS` | empty | Browser origins allowed to call the API cross-origin (the hosted site); empty disables CORS |
-| `API_AUTH_TOKEN` | empty | Bearer token required when the API is exposed through a tunnel (`docs/n8n-integration.md`) |
-
-## Usage
-
-1. Paste a YouTube URL, click **Resolve**.
-2. Review/edit Title, Artist, Album, Album Artist, Year, Genre, Compilation; optionally toggle **AAC 256**.
-3. Click **Download & tag**; watch live progress.
-4. When done, **Reveal in Finder** and drag the `.m4a` into Apple Music.
-
-Apple Music groups an album by **Album** (`©alb`) + **Album Artist** (`aART`); the tool sets a
-consistent `aART`, `trkn=(1,1)`, and `pgap=1` (gapless) so files import cleanly.
-
-## Tests
-
-```bash
-pip install -e ".[dev]"
-pytest -q                 # unit tests (ffmpeg-dependent ones skip if ffmpeg is missing)
-swift test --package-path macos  # native app tests (workflow, API contract, UI state)
-RUN_SMOKE=1 pytest tests/test_smoke.py -v   # optional end-to-end network test
-```
-
-## Notes
-
-- ALAC is lossless: it adds no quality beyond YouTube's already-lossy source, and produces files
-  ~5-10× the source size. Use the **AAC 256** toggle for smaller files. Output is never represented
-  as higher quality than the source.
-- yt-dlp self-updates best-effort on launch; set `YT_DLP_SELF_UPDATE=0` to disable.
-- If YouTube throws bot checks, set `POT_PROVIDER_URL` to a running PO-token provider sidecar.
-
-## Output layout
-
-Files are organized as `OUTPUT_DIR/<Artist>/<Set>/…`:
-
-- **Artist** = Album Artist (falls back to Artist).
-- **Set** = Album (falls back to Title).
-- Single track → `<Set>/<Title> [<video_id>].m4a` (the `[<video_id>]` suffix keeps two different source videos with the same Artist/Set/Title from overwriting each other).
-- Split album → `<Set>/01 - Track.m4a`, `02 - …`.
-- Each set folder also gets a standalone `cover.jpg` (the same square cover embedded in the audio) for setting Apple Music *playlist* artwork.
-
-## Splitting sets into tracks (v2)
-
-Toggle **Split into separate tracks** in the preview to cut a long mix/DJ set into a
-cohesive **gapless album**:
-
-1. Resolve a URL. If it has YouTube **chapters** or **description timestamps**, an
-   editable tracklist is proposed automatically (chapters preferred).
-2. Or paste a **1001tracklists URL** in the preview and click **Fetch tracklist**: the
-   page is fetched through Firecrawl (it renders JS and bypasses the Cloudflare bot
-   wall), and the ordered tracks + cue times fill the editor automatically (the set
-   artist/title fill Album Artist/Album). The split toggle flips on for you.
-4. Edit start times (`m:ss` / `h:mm:ss`), titles, and artists; add/remove/reorder rows.
-   You can also **paste** a tracklist by hand — formats `N. Artist - Title [time]`,
-   `Artist - Title`, and `time Title` are recognized; fill in any missing times.
-5. **Download & split** downloads + encodes the set once, cuts each track **losslessly**
-   (`ffmpeg -c copy`, no re-encode), and tags them as one album: shared Album/Album Artist,
-   sequential track numbers, `pgap=1` (gapless), and `cpil=1` when track artists differ.
-
-Output goes to `OUTPUT_DIR/<Album Artist>/<Album>/NN - Track.m4a` with a shared `cover.jpg`.
-
-### Tracklist sources
-
-The tracklist layer (`app/core/tracklist.py`) is source-agnostic. Each source is a
-`parse_*()` producer returning the same `Track`/`Tracklist` types:
-
-- **YouTube chapters** and **description timestamps** (`tracklist.py`).
-- **Manual paste/edit** (`tracklist.py`).
-- **1001tracklists** (`tracklist_1001.py`): paste the tracklist URL and it is fetched via
-  Firecrawl (the site is Cloudflare-Turnstile-gated with no official API) and parsed into
-  ordered tracks with cue times. Requires `FIRECRAWL_API_KEY`.
-
-Still deferred behind the same interface: **audio fingerprinting** (AudD / Panako).
+- [@JanOstrowka](https://github.com/JanOstrowka) — author
+- README layout borrowed from [MonitorControl](https://github.com/MonitorControl/MonitorControl)

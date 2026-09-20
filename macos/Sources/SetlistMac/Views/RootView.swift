@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     @Bindable private var environment: SetlistAppEnvironment
     @ObservedObject private var backend: BackendController
+    @Environment(\.openWindow) private var openWindow
 
     init(environment: SetlistAppEnvironment) {
         _environment = Bindable(wrappedValue: environment)
@@ -38,6 +39,12 @@ struct RootView: View {
         }
         .toolbar {
             ToolbarItem {
+                Button("Settings", systemImage: "gearshape") {
+                    openWindow(id: "settings")
+                }
+                .help("Settings (⌘,)")
+            }
+            ToolbarItem {
                 Button("New Set", systemImage: "plus") {
                     startOver()
                 }
@@ -54,7 +61,7 @@ struct RootView: View {
         case .failed(let message):
             EngineFailureView(
                 message: message,
-                projectRoot: backend.configuration.projectRoot,
+                logFileURL: backend.configuration.logFileURL,
                 retry: backend.retry
             )
         case .ready:
@@ -181,7 +188,7 @@ private struct EngineStartupView: View {
 
 private struct EngineFailureView: View {
     let message: String
-    let projectRoot: URL
+    let logFileURL: URL
     let retry: () -> Void
 
     var body: some View {
@@ -204,9 +211,9 @@ private struct EngineFailureView: View {
 
                 GlassEffectContainer(spacing: 16) {
                     HStack(spacing: 10) {
-                        Button("Show Project in Finder") {
+                        Button("Show Engine Log") {
                             NSWorkspace.shared.activateFileViewerSelecting([
-                                projectRoot
+                                logFileURL
                             ])
                         }
                         Button("Try Again", action: retry)

@@ -116,6 +116,14 @@ struct SetlistMacApp: App {
             SetlistCommands(environment: environment)
         }
 
+        Window("Settings", id: "settings") {
+            SettingsView(backend: environment.backend)
+                .preferredColorScheme(.dark)
+                .tint(SetlistTheme.cherry)
+        }
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+
         MenuBarExtra {
             SetlistMenu(environment: environment)
         } label: {
@@ -141,6 +149,14 @@ private struct SetlistCommands: Commands {
                 openSetlist()
             }
             .keyboardShortcut("o")
+        }
+
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                openWindow(id: "settings")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .keyboardShortcut(",")
         }
     }
 
@@ -174,6 +190,14 @@ private struct SetlistMenu: View {
         }
         .keyboardShortcut("n")
 
+        Button("Settings…") {
+            openWindow(id: "settings")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        .keyboardShortcut(",")
+
+        Divider()
+
         if case .failed = backend.status {
             Button("Try Starting Again") {
                 backend.retry()
@@ -181,20 +205,27 @@ private struct SetlistMenu: View {
         }
 
         if backend.ownsBackend {
-            Button("Stop Local Server") {
+            Button("Restart Engine") {
+                backend.retry()
+            }
+            Button("Stop Engine") {
                 backend.stop()
             }
         } else if backend.status == .idle {
-            Button("Start Local Server") {
+            Button("Start Engine") {
                 backend.retry()
             }
         }
 
         Divider()
 
-        Button("Show Project in Finder") {
+        Button("Show Finished Sets in Finder") {
+            revealOutputDirectory()
+        }
+
+        Button("Show Engine Log") {
             NSWorkspace.shared.activateFileViewerSelecting([
-                backend.configuration.projectRoot
+                backend.configuration.logFileURL
             ])
         }
 
@@ -209,5 +240,16 @@ private struct SetlistMenu: View {
     private func openSetlist() {
         openWindow(id: "setlist")
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Reveals the output folder, creating it first so the menu item works
+    /// before the first set has finished.
+    private func revealOutputDirectory() {
+        let url = backend.configuration.outputDirectoryURL
+        try? FileManager.default.createDirectory(
+            at: url,
+            withIntermediateDirectories: true
+        )
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }

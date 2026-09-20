@@ -45,7 +45,7 @@ const setConfig = node({
       mode: 'manual',
       assignments: {
         assignments: [
-          { id: 'cfg-base-url', name: 'macBaseUrl', value: 'https://macbook-pro.tailb2c1e.ts.net', type: 'string' },
+          { id: 'cfg-base-url', name: 'macBaseUrl', value: 'https://your-mac.your-tailnet.ts.net', type: 'string' },
           { id: 'cfg-api-token', name: 'macApiToken', value: 'PASTE_API_AUTH_TOKEN_FROM_MAC_ENV', type: 'string' },
           { id: 'cfg-webhook-token', name: 'webhookToken', value: 'PASTE_N8N_WEBHOOK_TOKEN_FROM_MAC_ENV', type: 'string' },
         ],
@@ -55,7 +55,7 @@ const setConfig = node({
     position: [460, 380],
   },
   output: [{
-    macBaseUrl: 'https://macbook-pro.tailb2c1e.ts.net',
+    macBaseUrl: 'https://your-mac.your-tailnet.ts.net',
     macApiToken: 'token',
     webhookToken: 'webhook-token',
     headers: { 'x-n8n-auth': 'webhook-token' },
@@ -81,7 +81,7 @@ const checkToken = node({
     },
     position: [680, 380],
   },
-  output: [{ macBaseUrl: 'https://macbook-pro.tailb2c1e.ts.net', body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', video_id: 'dQw4w9WgXcQ' } }],
+  output: [{ macBaseUrl: 'https://your-mac.your-tailnet.ts.net', body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', video_id: 'dQw4w9WgXcQ' } }],
 });
 
 const rejectRequest = node({
@@ -151,7 +151,7 @@ const buildSiteJob = node({
   output: [{
     split: true,
     note: 'Split download: 24 tracks (reviewed in the site UI)',
-    body: { video_id: 'dQw4w9WgXcQ', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', metadata: { title: 'Set Title' }, format: 'alac', cover: 'keep', callback_url: 'https://janostrowka.app.n8n.cloud/webhook-waiting/123', tracks: [{ start: 0, title: 'Opener', artist: 'Artist A' }] },
+    body: { video_id: 'dQw4w9WgXcQ', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', metadata: { title: 'Set Title' }, format: 'alac', cover: 'keep', callback_url: 'https://your-instance.app.n8n.cloud/webhook-waiting/123', tracks: [{ start: 0, title: 'Opener', artist: 'Artist A' }] },
   }],
 });
 
@@ -501,7 +501,7 @@ const buildPayload = node({
   output: [{
     split: true,
     note: 'Split download: 24 tracks',
-    body: { video_id: 'dQw4w9WgXcQ', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', metadata: { title: 'Set Title' }, format: 'alac', cover: 'keep', callback_url: 'https://janostrowka.app.n8n.cloud/webhook-waiting/123', tracks: [{ start: 0, title: 'Opener', artist: 'Artist A' }] },
+    body: { video_id: 'dQw4w9WgXcQ', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', metadata: { title: 'Set Title' }, format: 'alac', cover: 'keep', callback_url: 'https://your-instance.app.n8n.cloud/webhook-waiting/123', tracks: [{ start: 0, title: 'Opener', artist: 'Artist A' }] },
   }],
 });
 

@@ -247,6 +247,39 @@ final class WorkflowControllerTests: XCTestCase {
         XCTAssertTrue(draft.tracklist.note.contains(found.absoluteString))
     }
 
+    func testAutoTracklistReplacesBackendKeyNoteWhenInAppSearchFindsNothing() async throws {
+        // The packaged app has no Firecrawl key, so the backend's note
+        // talks about configuring one. After the in-app search has also
+        // come up empty, the user must see what actually happened.
+        let api = StubAPI(
+            resolve: { _ in .fixture(videoID: "video") },
+            autoTracklist: { _, _, _ in
+                APITracklist(
+                    source: .none,
+                    note: "Set a FIRECRAWL_API_KEY to auto-fetch tracklists from 1001tracklists."
+                )
+            }
+        )
+        let fetcher = StubPageFetcher(searchResult: nil, pageText: "")
+        let history = try makeHistory()
+        let controller = WorkflowController(
+            api: api,
+            history: history,
+            pageFetcher: fetcher
+        )
+        await controller.resolve("source")
+
+        await controller.autoTracklist(query: "Obscure Set")
+
+        guard case .reviewing(let draft) = controller.state else {
+            return XCTFail("Expected reviewing")
+        }
+        XCTAssertTrue(draft.tracklist.tracks.isEmpty)
+        XCTAssertEqual(fetcher.searchedQueries, ["Obscure Set"])
+        XCTAssertEqual(draft.tracklist.note, WorkflowController.noTracklistFoundNote)
+        XCTAssertFalse(draft.tracklist.note.contains("FIRECRAWL"))
+    }
+
     func testIsFetchingTracklistTracksLookupLifecycle() async throws {
         let tracklistGate = ValueGate<APITracklist>()
         let api = StubAPI(

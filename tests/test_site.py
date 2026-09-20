@@ -5,6 +5,7 @@ scripts/build_site.py and committed, so Vercel deploys plain static files).
 These tests fail the suite when the copies drift or the site page loses one of
 the elements/hooks the shared script depends on.
 """
+import re
 from pathlib import Path
 
 from app.config import APP_NAME
@@ -51,8 +52,10 @@ def test_site_ships_no_personal_config():
     (The public GitHub repo URL in the setup instructions is fine — it's the
     product's home, not configuration.)
     """
+    # Any n8n Cloud host other than the documented placeholder is somebody's
+    # real instance.
+    hosts = re.compile(r"https?://([a-z0-9-]+)\.app\.n8n\.cloud", re.IGNORECASE)
     for name in ("index.html", "site.js", "site.css"):
         text = (SITE / name).read_text(encoding="utf-8")
-        assert "janostrowka.app.n8n.cloud" not in text.lower(), (
-            f"personal n8n instance leaked into site/{name}"
-        )
+        leaked = {m.lower() for m in hosts.findall(text)} - {"your-instance"}
+        assert not leaked, f"personal n8n instance leaked into site/{name}: {leaked}"

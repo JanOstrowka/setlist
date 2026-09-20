@@ -393,10 +393,26 @@ class JobManager:
             return [str(set_dir / f.name) for f in files]
 
 
+def yt_dlp_update_command(target: str | None) -> list[str]:
+    """pip invocation that keeps yt-dlp current.
+
+    In a source checkout the venv is writable, so a plain upgrade is fine. The
+    packaged Mac app is code-signed and must never be written to, so the native
+    wrapper sets YT_DLP_UPDATE_TARGET to a per-user folder that it also puts at
+    the front of PYTHONPATH: the update lands there and shadows the bundled
+    copy on the next start. --no-deps keeps the overlay to yt-dlp itself; its
+    optional helpers ship with the app already.
+    """
+    cmd = [sys.executable, "-m", "pip", "install", "-U", "--quiet", "yt-dlp"]
+    if target:
+        cmd += ["--no-deps", "--target", target]
+    return cmd
+
+
 def _self_update_yt_dlp() -> None:
     try:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-U", "--quiet", "yt-dlp"],
+            yt_dlp_update_command(os.getenv("YT_DLP_UPDATE_TARGET") or None),
             check=False, capture_output=True, timeout=180,
         )
     except Exception:
