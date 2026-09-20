@@ -16,19 +16,21 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                // No textContentType: an API key is not a login password,
-                // and the .password type summons the Passwords autofill UI.
-                SecureField("OpenAI API key", text: $draft.openAIKey, prompt: Text("sk-…"))
-                    .autocorrectionDisabled()
-                TextField("Model", text: $draft.openAIModel, prompt: Text("gpt-4o-mini"))
-                    .autocorrectionDisabled()
-            } header: {
-                Text("Metadata")
-            } footer: {
-                Text(
-                    "Optional. With a key, Setlist asks OpenAI to clean up titles, "
-                        + "artists, albums, and genres. Without one it parses the video title."
-                )
+                Label {
+                    Text("No account or API key needed.")
+                        .font(.body.weight(.semibold))
+                    Text(
+                        "Setlist downloads, cuts, tags, and imports on this Mac. "
+                            + "The only things to decide are where the files go "
+                            + "and how they are encoded."
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "lock.laptopcomputer")
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
             }
 
             Section {
@@ -157,15 +159,11 @@ struct SettingsView: View {
 
 /// The editable subset of the settings file, with change tracking.
 struct SettingsDraft: Equatable {
-    var openAIKey: String
-    var openAIModel: String
     var outputDirectory: String
     var defaultFormat: String
     private var saved: Snapshot
 
     private struct Snapshot: Equatable {
-        var openAIKey: String
-        var openAIModel: String
         var outputDirectory: String
         var defaultFormat: String
     }
@@ -173,43 +171,23 @@ struct SettingsDraft: Equatable {
     static let defaultOutputDirectory = "~/Music/YouTube Sets"
 
     init(from file: EnvFile) {
-        openAIKey = file.value(for: "OPENAI_API_KEY") ?? ""
-        openAIModel = file.value(for: "OPENAI_MODEL") ?? ""
         let output = file.value(for: "OUTPUT_DIR") ?? ""
         outputDirectory = output.isEmpty ? Self.defaultOutputDirectory : output
         let format = file.value(for: "DEFAULT_FORMAT") ?? ""
         defaultFormat = format == "aac256" ? "aac256" : "alac"
-        saved = Snapshot(
-            openAIKey: openAIKey,
-            openAIModel: openAIModel,
-            outputDirectory: outputDirectory,
-            defaultFormat: defaultFormat
-        )
+        saved = Snapshot(outputDirectory: outputDirectory, defaultFormat: defaultFormat)
     }
 
     var isDirty: Bool {
-        saved != Snapshot(
-            openAIKey: openAIKey,
-            openAIModel: openAIModel,
-            outputDirectory: outputDirectory,
-            defaultFormat: defaultFormat
-        )
+        saved != Snapshot(outputDirectory: outputDirectory, defaultFormat: defaultFormat)
     }
 
     mutating func markSaved() {
-        saved = Snapshot(
-            openAIKey: openAIKey,
-            openAIModel: openAIModel,
-            outputDirectory: outputDirectory,
-            defaultFormat: defaultFormat
-        )
+        saved = Snapshot(outputDirectory: outputDirectory, defaultFormat: defaultFormat)
     }
 
     /// Writes the draft into `file`, leaving unrelated keys alone.
     func apply(to file: inout EnvFile) {
-        file.set(openAIKey.trimmingCharacters(in: .whitespaces), for: "OPENAI_API_KEY")
-        let model = openAIModel.trimmingCharacters(in: .whitespaces)
-        file.set(model.isEmpty ? "gpt-4o-mini" : model, for: "OPENAI_MODEL")
         let output = outputDirectory.trimmingCharacters(in: .whitespaces)
         file.set(output.isEmpty ? Self.defaultOutputDirectory : output, for: "OUTPUT_DIR")
         file.set(defaultFormat, for: "DEFAULT_FORMAT")

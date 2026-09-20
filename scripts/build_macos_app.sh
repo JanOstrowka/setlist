@@ -193,7 +193,7 @@ smoke_test_engine() {
     PATH="$ENGINE/bin:/usr/bin:/bin" \
       "$py" - <<'PY'
 import importlib, shutil, sys
-for name in ("uvicorn", "fastapi", "yt_dlp", "mutagen", "PIL", "httpx", "openai", "dotenv", "certifi"):
+for name in ("uvicorn", "fastapi", "yt_dlp", "mutagen", "PIL", "httpx", "dotenv", "certifi"):
     importlib.import_module(name)
 import app.main  # noqa: F401  (mounts web/, builds the job manager)
 for tool in ("ffmpeg", "ffprobe"):

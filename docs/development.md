@@ -95,20 +95,19 @@ The README download button always points at the latest release.
 
 Source builds read `.env` in the checkout; the packaged app reads
 `~/Library/Application Support/Setlist/settings.env` (created on first launch, edited by
-the Settings window). Same keys:
+the Settings window). Same keys. None is required — Setlist runs with no account or API
+key; the ones marked *web UI / API* only matter when the engine serves other clients.
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `OPENAI_API_KEY` | — | Optional. With it, titles/artists/genres are cleaned up by AI; without it, Setlist parses the video title |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Cheap, fast default |
-| `FIRECRAWL_API_KEY` | — | Optional. Only the **web UI** needs it to fetch 1001tracklists; the native app renders the page itself |
+| `FIRECRAWL_API_KEY` | — | *Web UI / API.* Lets the browser UI fetch 1001tracklists through Firecrawl; the Mac app renders the page itself |
 | `OUTPUT_DIR` | `~/Music/YouTube Sets` | Where finished sets land; created on first run |
 | `DEFAULT_FORMAT` | `alac` | UI toggle switches to `aac256` |
 | `PORT` | `8765` | Loopback server port |
 | `YT_DLP_SELF_UPDATE` | `1` | `0` disables the best-effort `yt-dlp` update on launch |
-| `POT_PROVIDER_URL` | empty | Optional PO-token provider sidecar for YouTube bot checks |
-| `CORS_ORIGINS` | empty | Browser origins allowed to call the API cross-origin (the hosted site); empty disables CORS |
-| `API_AUTH_TOKEN` | empty | Bearer token required when the API is exposed through a tunnel ([n8n-integration.md](n8n-integration.md)) |
+| `POT_PROVIDER_URL` | empty | Advanced. PO-token provider sidecar for YouTube bot checks |
+| `CORS_ORIGINS` | empty | *Web UI / API.* Browser origins allowed to call the API cross-origin (the hosted site); empty disables CORS |
+| `API_AUTH_TOKEN` | empty | *Web UI / API.* Bearer token required when the API is exposed through a tunnel ([n8n-integration.md](n8n-integration.md)) |
 
 ## Tests
 

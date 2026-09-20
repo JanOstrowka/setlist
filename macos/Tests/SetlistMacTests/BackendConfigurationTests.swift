@@ -101,15 +101,19 @@ final class BackendConfigurationTests: XCTestCase {
         try configuration.ensureSettingsFileExists()
         var file = EnvFile(contentsOf: settingsURL)
         XCTAssertEqual(file.value(for: "PORT"), "8765")
-        XCTAssertEqual(file.value(for: "OPENAI_API_KEY"), "")
+        XCTAssertEqual(file.value(for: "DEFAULT_FORMAT"), "alac")
+        XCTAssertNil(
+            file.value(for: "OPENAI_API_KEY"),
+            "The template asks for no API key of any kind"
+        )
 
-        file.set("sk-test", for: "OPENAI_API_KEY")
+        file.set("aac256", for: "DEFAULT_FORMAT")
         try file.write(to: settingsURL)
         try configuration.ensureSettingsFileExists()
 
         XCTAssertEqual(
-            EnvFile(contentsOf: settingsURL).value(for: "OPENAI_API_KEY"),
-            "sk-test",
+            EnvFile(contentsOf: settingsURL).value(for: "DEFAULT_FORMAT"),
+            "aac256",
             "An existing settings file must never be overwritten"
         )
         XCTAssertEqual(

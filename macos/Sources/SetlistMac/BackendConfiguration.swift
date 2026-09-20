@@ -45,7 +45,7 @@ struct BackendConfiguration {
     let engine: Engine
 
     /// User-editable `KEY=value` settings loaded into the engine's
-    /// environment (`OPENAI_API_KEY`, `OUTPUT_DIR`, `PORT`, …).
+    /// environment (`OUTPUT_DIR`, `DEFAULT_FORMAT`, `PORT`, …).
     let settingsFileURL: URL
 
     let port: Int
@@ -128,11 +128,7 @@ struct BackendConfiguration {
     static let settingsTemplate = """
     # Setlist settings. Changes apply after the engine restarts
     # (Settings… → Save, or the menu bar icon → Restart Engine).
-
-    # OpenAI API key for AI-assisted titles, artists, and genres. Optional:
-    # without it, Setlist parses the video title instead.
-    OPENAI_API_KEY=
-    OPENAI_MODEL=gpt-4o-mini
+    # Setlist needs no account or API key; everything runs on this Mac.
 
     # Where finished sets are saved.
     OUTPUT_DIR="~/Music/YouTube Sets"

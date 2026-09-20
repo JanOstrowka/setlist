@@ -12,15 +12,12 @@ def test_app_name_is_setlist():
 
 def test_config_defaults(monkeypatch):
     for key in [
-        "OPENAI_API_KEY", "FIRECRAWL_API_KEY", "OPENAI_MODEL",
-        "OUTPUT_DIR", "DEFAULT_FORMAT", "PORT", "POT_PROVIDER_URL",
+        "FIRECRAWL_API_KEY", "OUTPUT_DIR", "DEFAULT_FORMAT", "PORT", "POT_PROVIDER_URL",
     ]:
         monkeypatch.delenv(key, raising=False)
     cfg = load_config()
-    assert cfg.openai_model == "gpt-4o-mini"
     assert cfg.default_format == "alac"
     assert cfg.port == 8765
-    assert cfg.openai_api_key is None
     assert cfg.firecrawl_api_key is None
     assert cfg.pot_provider_url is None
     # Safe default: a dedicated drop folder, NOT the live Apple Music managed
@@ -30,15 +27,13 @@ def test_config_defaults(monkeypatch):
 
 
 def test_config_reads_environment(monkeypatch):
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o")
     monkeypatch.setenv("DEFAULT_FORMAT", "aac256")
     monkeypatch.setenv("PORT", "9000")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test")
     cfg = load_config()
-    assert cfg.openai_model == "gpt-4o"
     assert cfg.default_format == "aac256"
     assert cfg.port == 9000
-    assert cfg.openai_api_key == "sk-test"
+    assert cfg.firecrawl_api_key == "fc-test"
 
 
 def test_output_dir_expands_tilde(monkeypatch):

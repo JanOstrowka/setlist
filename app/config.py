@@ -39,9 +39,9 @@ def _parse_origins(raw: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Config:
-    openai_api_key: str | None
+    # Only the browser UI needs this, to read 1001tracklists through
+    # Firecrawl; the Mac app renders the page itself.
     firecrawl_api_key: str | None
-    openai_model: str
     output_dir: Path
     default_format: str
     port: int
@@ -58,9 +58,7 @@ _DEFAULT_MASTER_CACHE_BYTES = 3 * 1024**3
 
 def load_config() -> Config:
     return Config(
-        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         firecrawl_api_key=os.getenv("FIRECRAWL_API_KEY") or None,
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         output_dir=_expand(os.getenv("OUTPUT_DIR", "~/Music/YouTube Sets")),
         default_format=os.getenv("DEFAULT_FORMAT", "alac"),
         port=int(os.getenv("PORT", "8765")),

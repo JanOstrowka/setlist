@@ -1,5 +1,5 @@
 from app.core.resolver import RawInfo
-from app.core.metadata_ai import clean_title, parse_title_fallback, _map_ai_json
+from app.core.metadata import clean_title, parse_title_fallback, propose_metadata
 
 
 def _raw(**overrides) -> RawInfo:
@@ -44,40 +44,6 @@ def test_parse_title_fallback_uses_uploader_when_no_separator():
     assert meta.title == "Just A Title"
 
 
-def test_map_ai_json_overrides_and_coerces():
-    raw = _raw(title="DJ Test - Sunset Set")
-    fallback = parse_title_fallback(raw)
-    data = {
-        "title": "Sunset Set",
-        "artist": "DJ Test",
-        "album": "Tomorrowland 2025",
-        "album_artist": "Various Artists",
-        "year": "2025",
-        "genre": "Electronic",
-        "compilation": True,
-    }
-    meta = _map_ai_json(data, fallback, raw)
-    assert meta.album == "Tomorrowland 2025"
-    assert meta.album_artist == "Various Artists"
-    assert meta.year == 2025
-    assert meta.genre == "Electronic"
-    assert meta.compilation is True
-    assert meta.comment == "https://youtu.be/abc123"
-
-
-def test_map_ai_json_empty_fields_fall_back():
-    raw = _raw(title="DJ Test - Sunset Set")
-    fallback = parse_title_fallback(raw)
-    data = {"title": "", "artist": "", "album": "", "album_artist": "", "year": None, "genre": "", "compilation": False}
-    meta = _map_ai_json(data, fallback, raw)
-    assert meta.title == fallback.title
-    assert meta.artist == fallback.artist
-    assert meta.album == fallback.album
-    assert meta.year == fallback.year
-
-
-def test_map_ai_json_bad_year_falls_back():
-    raw = _raw(title="A - B")
-    fallback = parse_title_fallback(raw)
-    meta = _map_ai_json({"year": "not-a-year"}, fallback, raw)
-    assert meta.year == fallback.year
+def test_propose_metadata_is_the_title_parse():
+    raw = _raw(title="DJ Test - Sunset Set [Official Video]")
+    assert propose_metadata(raw) == parse_title_fallback(raw)

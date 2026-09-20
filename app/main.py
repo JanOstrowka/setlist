@@ -24,7 +24,7 @@ from .config import APP_NAME, init_env, load_config
 from .core import (
     downloader,
     library,
-    metadata_ai,
+    metadata,
     resolver,
     splitter,
     tagger,
@@ -616,7 +616,7 @@ def resolve_endpoint(req: ResolveRequest) -> ResolveResponse:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Could not resolve URL: {resolver.augment_error(exc)}")
 
-    meta = metadata_ai.propose_metadata(raw, cfg)
+    meta = metadata.propose_metadata(raw)
 
     cover_uri = ""
     if raw.thumbnail:

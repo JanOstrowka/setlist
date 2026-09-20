@@ -37,8 +37,8 @@ Everything the app needs — the media engine, `ffmpeg`, `yt-dlp` — ships insi
 - Change your mind later: **Edit Set** on any finished set fixes titles or cues and replaces the files — the encoded master is cached, so a re-run skips the download.
 - **Add to Apple Music** in one click when the set is done; files import as a single gapless album.
 - Remembers every set in a **Recent** sidebar; one set is produced at a time, with live download speed, ETA and per-track status.
-- Optional **OpenAI** key cleans up titles, artists and genres. Without it, Setlist parses the video title.
-- Runs from the menu bar. Nothing leaves your Mac except the requests to YouTube.
+- **No account, no API key.** Nothing to sign up for or paste in; the app is complete as downloaded.
+- Runs from the menu bar. Nothing leaves your Mac except the requests to YouTube and 1001tracklists.
 - Completely free and open source.
 
 ### Screenshots
@@ -56,7 +56,7 @@ Everything the app needs — the media engine, `ffmpeg`, `yt-dlp` — ships insi
 5. Check the metadata and tracklist, then click **Download**.
 6. When it's done, click **Add to Apple Music**. The first time, macOS asks whether Setlist may control Music — that permission is what performs the import.
 7. Spotted a wrong title afterwards? Pick the set in **Recent**, click **Edit Set**, fix it, then **Replace Files**. Old files go to the Trash, never straight to deletion.
-8. Open **Settings…** (`⌘,`) to add an OpenAI key, pick the output folder (default `~/Music/YouTube Sets`), or switch to AAC.
+8. Open **Settings…** (`⌘,`) to pick the output folder (default `~/Music/YouTube Sets`) or switch to AAC. That's all there is to configure.
 
 ### macOS compatibility
 
@@ -98,7 +98,6 @@ The build bundles a relocatable Python, the backend, and static `ffmpeg`/`ffprob
 - [mutagen](https://github.com/quodlibet/mutagen) — MP4 tagging
 - [FastAPI](https://fastapi.tiangolo.com) + [uvicorn](https://www.uvicorn.org) — the local engine API
 - [Pillow](https://python-pillow.org), [httpx](https://www.python-httpx.org), [pydantic](https://docs.pydantic.dev), [python-dotenv](https://github.com/theskumar/python-dotenv)
-- [openai](https://github.com/openai/openai-python) — optional metadata cleanup
 - [python-build-standalone](https://github.com/astral-sh/python-build-standalone) via `uv` — the bundled interpreter
 
 ## Credits
